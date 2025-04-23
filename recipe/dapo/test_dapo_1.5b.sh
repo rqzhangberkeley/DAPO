@@ -2,13 +2,13 @@
 set -xeuo pipefail
 
 # module default
-# module load cuda/12.6.1
-# module load gcc/11.4.0
+module load cuda/12.6.1
+module load gcc/11.4.0
 # conda activate verl
 wandb login 363018e9dc8339fae726d3b48a839f262c457194
 
 project_name='DAPO'
-exp_name='DAPO-Qwen2.5-1.5B-MATH500'
+exp_name='DAPO-Qwen2.5-Math-1.5B'
 
 adv_estimator=rloo
 use_kl_in_reward=False
@@ -42,9 +42,9 @@ RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
 NNODES=${NNODES:-1}
 GPUS_PER_NODE=${GPUS_PER_NODE:-4}
 # Paths
-MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-1.5B"}
-TRAIN_FILE=${TRAIN_FILE:-"./data/math500-base/train.parquet"} # We test on MATH500 dataset first.
-TEST_FILE=${TEST_FILE:-"./data/math500-base/test.parquet"}
+MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-Math-1.5B"}
+TRAIN_FILE=${TRAIN_FILE:-"./data/DAPO-17k/train.parquet"} # We test on MATH500 dataset first.
+TEST_FILE=${TEST_FILE:-"./data/AIME/train.parquet"}
 
 # Algorithm
 temperature=1.0
@@ -136,3 +136,6 @@ python3 -m recipe.dapo.src.main_dapo \
     trainer.save_freq=-1 \
     trainer.total_epochs=${total_epochs} \
     trainer.resume_mode=disable
+
+# run
+# ./recipe/dapo/test_dapo_1.5b.sh
