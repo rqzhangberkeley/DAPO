@@ -4,13 +4,11 @@ set -xeuo pipefail
 project_name='DAPO'
 exp_name='DAPO-Qwen2.5-7B-Math-Test'
 
-adv_estimator=grpo
-
+adv_estimator=rloo
 use_kl_in_reward=False
 kl_coef=0.0
 use_kl_loss=False
 kl_loss_coef=0.0
-
 clip_ratio_low=0.2
 clip_ratio_high=0.28
 
