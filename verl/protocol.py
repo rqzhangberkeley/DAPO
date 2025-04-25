@@ -708,6 +708,70 @@ class DataProto:
             meta_info=self.meta_info,
         )
 
+    # RZ: Added by RZ.
+    def truncate(self, start=None, end=None):
+        """
+        Truncate the batch data at the specified start and end indices.
+
+        Args:
+            start (int, optional): Start index. Defaults to None (start from beginning).    
+            end (int, optional): End index. Defaults to None (end at the end).
+
+        Returns:
+            DataProto: A new DataProto with truncated data.
+        """
+        slice_obj = slice(start, end)
+        # Only Handle the batch data
+        if self.batch is not None:
+            sliced_batch = TensorDict(
+                source={key: tensor[:,slice_obj] for key, tensor in self.batch.items()},
+                batch_size=(self.batch.batch_size[0],),
+            )
+        else:
+            sliced_batch = None
+
+        # Return a new DataProto object
+        return DataProto(batch=sliced_batch, non_tensor_batch=self.non_tensor_batch, meta_info=self.meta_info)
+
+    # RZ: Added by RZ.
+    def interleave_by_uid(self):
+        """
+        Rearranges the data so that responses from the same prompt UID are grouped together.
+        This is especially useful for curriculum learning where we generate multiple
+        responses for each prompt and want to keep them together.
+
+        Returns:
+            DataProto: A new DataProto with reordered data, where all responses for the same prompt are together.
+        """
+        if "uid" not in self.non_tensor_batch:
+            raise ValueError("DataProto must have 'uid' in non_tensor_batch to interleave by uid")
+
+        # Collect all unique UIDs while preserving their first occurrence order
+        unique_uids = []
+        for uid in self.non_tensor_batch["uid"]:
+            if uid not in unique_uids:
+                unique_uids.append(uid)
+
+        # Create a mapping from UIDs to their indices
+        uid_to_indices = {}
+        for idx, uid in enumerate(self.non_tensor_batch["uid"]):
+            if uid not in uid_to_indices:
+                uid_to_indices[uid] = []
+            uid_to_indices[uid].append(idx)
+
+        # Create a new ordering such that responses from the same UID are together
+        new_indices = []
+        for uid in unique_uids:
+            new_indices.extend(uid_to_indices[uid])
+
+        # Return a newly ordered DataProto
+        return self.select_idxs(new_indices)
+
+
+
+
+
+
 
 import ray
 

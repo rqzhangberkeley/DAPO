@@ -207,6 +207,9 @@ class vLLMRollout(BaseRollout):
 
         do_sample = prompts.meta_info.get("do_sample", True)
         is_validate = prompts.meta_info.get("validate", False)
+
+        #  RZ: If we are continue generating responses.
+        is_continue = prompts.meta_info.get("continue", False)
         if not do_sample:
             kwargs = {
                 "best_of": 1,
@@ -223,6 +226,12 @@ class vLLMRollout(BaseRollout):
                 "top_p": self.config.val_kwargs.top_p,
                 "temperature": self.config.val_kwargs.temperature,
                 "n": 1,  # if validate, already repeat in ray_trainer
+            }
+        # RZ: If we are continue generating responses.
+        elif is_continue:
+            assert 'n_continue' in self.config, "n_continue is not set in the config."
+            kwargs = {
+                "n": self.config.n_continue,
             }
 
         # users can customize different sampling_params at different run

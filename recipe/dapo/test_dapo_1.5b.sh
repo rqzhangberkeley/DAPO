@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 set -xeuo pipefail
 
+export VLLM_ATTENTION_BACKEND=XFORMERS
+export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 # RZ: Override the max_position_embeddings for -Math-1.5B and -Math-7B models (4096 for the math models). This allows the model to accept context lengths larger than the model’s default maximum. But this seems does not work.
+
 # module default
-module load cuda/12.6.1
-module load gcc/11.4.0
+# module load cuda/12.6.1
+# module load gcc/11.4.0
 # conda activate verl
 wandb login 363018e9dc8339fae726d3b48a839f262c457194
 
 project_name='DAPO'
-exp_name='DAPO-Qwen2.5-Math-1.5B'
+exp_name='DAPO-Qwen2.5-1.5B'
 
 adv_estimator=rloo
 use_kl_in_reward=False
@@ -20,20 +23,24 @@ clip_ratio_high=0.28
 
 max_prompt_length=1024
 max_response_length=2048
-enable_overlong_buffer=True
+max_num_batched_tokens=8192
+enable_overlong_buffer=False
 overlong_buffer_len=512
 overlong_penalty_factor=1.0
 
 loss_agg_mode="token-mean"
 
-enable_filter_groups=True
-filter_groups_metric=acc
-max_num_gen_batches=10
-train_prompt_bsz=512
-gen_prompt_bsz=1024
-train_prompt_mini_bsz=32
-n_resp_per_prompt=16
-total_epochs=10
+enable_filter_groups=True # Whether we filter the prompts base on the pass rates.
+filter_groups_metric=acc # The metric to filter the prompts.
+max_num_gen_batches=50 # The maximum number of generations to generate. If we exceed this number, we will stop generating and raise error.
+train_prompt_bsz=16
+gen_prompt_bsz=256
+train_prompt_mini_bsz=4
+n_resp_per_prompt=4
+n_resp_continue=12
+total_epochs=1
+enable_curriculum=True
+val_before_train=True
 
 # Ray
 RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
@@ -42,9 +49,9 @@ RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
 NNODES=${NNODES:-1}
 GPUS_PER_NODE=${GPUS_PER_NODE:-4}
 # Paths
-MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-Math-1.5B"}
-TRAIN_FILE=${TRAIN_FILE:-"./data/DAPO-17k/train.parquet"} # We test on MATH500 dataset first.
-TEST_FILE=${TEST_FILE:-"./data/AIME/train.parquet"}
+MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-1.5B"}
+TRAIN_FILE=${TRAIN_FILE:-"./data/DAPO-17k-Qwen-base/train.parquet"} # We test on MATH500 dataset first.
+TEST_FILE=${TEST_FILE:-"./data/AIME-Qwen-base/train.parquet"}
 
 # Algorithm
 temperature=1.0
@@ -71,6 +78,7 @@ python3 -m recipe.dapo.src.main_dapo \
     data.train_batch_size=${train_prompt_bsz} \
     data.truncation='left' \
     actor_rollout_ref.rollout.n=${n_resp_per_prompt} \
+    actor_rollout_ref.rollout.n_continue=${n_resp_continue} \
     actor_rollout_ref.actor.use_kl_loss=${use_kl_loss} \
     actor_rollout_ref.actor.kl_loss_coef=${kl_loss_coef} \
     actor_rollout_ref.actor.clip_ratio_low=${clip_ratio_low} \
@@ -109,7 +117,7 @@ python3 -m recipe.dapo.src.main_dapo \
     actor_rollout_ref.rollout.log_prob_micro_batch_size=${infer_micro_batch_size} \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.enable_chunked_prefill=True \
-    actor_rollout_ref.rollout.max_num_batched_tokens=$((max_prompt_length + max_response_length)) \
+    actor_rollout_ref.rollout.max_num_batched_tokens=${max_num_batched_tokens} \
     actor_rollout_ref.rollout.temperature=${temperature} \
     actor_rollout_ref.rollout.top_p=${top_p} \
     actor_rollout_ref.rollout.top_k="${top_k}" \
@@ -131,11 +139,12 @@ python3 -m recipe.dapo.src.main_dapo \
     trainer.experiment_name="${exp_name}" \
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
     trainer.nnodes="${NNODES}" \
-    trainer.val_before_train=True \
+    trainer.val_before_train=${val_before_train} \
     trainer.test_freq=2 \
     trainer.save_freq=-1 \
     trainer.total_epochs=${total_epochs} \
-    trainer.resume_mode=disable
+    trainer.resume_mode=disable \
+    curriculum.enable=${enable_curriculum}
 
 # run
 # ./recipe/dapo/test_dapo_1.5b.sh

@@ -535,6 +535,8 @@ class RayPPOTrainer:
     def _maybe_log_val_generations(self, inputs, outputs, scores):
         """Log a table of validation samples to the configured logger (wandb or swanlab)"""
 
+        # TODO: RZ: Log the validation generations to the local files.
+
         generations_to_log = self.config.trainer.log_val_generations
 
         if generations_to_log == 0:
@@ -566,7 +568,7 @@ class RayPPOTrainer:
         sample_scores = []
 
         for test_data in self.val_dataloader:
-            test_batch = DataProto.from_single_dict(test_data)
+            test_batch = DataProto.from_single_dict(test_data) # RZ: The validation dataset has only one batch.
 
             # repeat test batch
             test_batch = test_batch.repeat(
@@ -578,10 +580,10 @@ class RayPPOTrainer:
                 return {}
 
             # Store original inputs
-            input_ids = test_batch.batch["input_ids"]
+            input_ids = test_batch.batch["input_ids"] # RZ: tensor. shape = bsz * seq length.
             # TODO: Can we keep special tokens except for padding tokens?
             input_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in input_ids]
-            sample_inputs.extend(input_texts)
+            sample_inputs.extend(input_texts) # RZ: A list of input texts.
 
             test_gen_batch = test_batch.pop(
                 batch_keys=["input_ids", "attention_mask", "position_ids"],
@@ -599,7 +601,7 @@ class RayPPOTrainer:
 
             # pad to be divisible by dp_size
             test_gen_batch_padded, pad_size = pad_dataproto_to_divisor(test_gen_batch, self.actor_rollout_wg.world_size)
-            test_output_gen_batch_padded = self.actor_rollout_wg.generate_sequences(test_gen_batch_padded)
+            test_output_gen_batch_padded = self.actor_rollout_wg.generate_sequences(test_gen_batch_padded) # RZ: DataProto.
 
             # unpad
             test_output_gen_batch = unpad_dataproto(test_output_gen_batch_padded, pad_size=pad_size)
@@ -607,20 +609,20 @@ class RayPPOTrainer:
 
             # Store generated outputs
             output_ids = test_output_gen_batch.batch["responses"]
-            output_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in output_ids]
+            output_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in output_ids] # RZ: A list of string.
             sample_outputs.extend(output_texts)
 
             test_batch = test_batch.union(test_output_gen_batch)
 
             # evaluate using reward_function
-            result = self.val_reward_fn(test_batch, return_dict=True)
-            reward_tensor = result["reward_tensor"]
-            scores = reward_tensor.sum(-1).cpu().tolist()
+            result = self.val_reward_fn(test_batch, return_dict=True) # RZ: If we use default reward fuxtion for DAPO or AIME, the reward is the rule-based reward + length penalty.
+            reward_tensor = result["reward_tensor"] # RZ: tensor. Shape = bsz * response's length.
+            scores = reward_tensor.sum(-1).cpu().tolist() # RZ: length = bsz. In AIME, we already repeat every question for 30 times so here is 960.
             sample_scores.extend(scores)
 
             reward_extra_infos_dict["reward"].extend(scores)
             if "reward_extra_info" in result:
-                for key, lst in result["reward_extra_info"].items():
+                for key, lst in result["reward_extra_info"].items(): # RZ: keys = score, acc, pred
                     reward_extra_infos_dict[key].extend(lst)
 
             data_source_lst.append(test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0]))
@@ -632,8 +634,10 @@ class RayPPOTrainer:
 
         data_sources = np.concatenate(data_source_lst, axis=0)
 
-        data_src2var2metric2val = process_validation_metrics(data_sources, sample_inputs, reward_extra_infos_dict)
+        data_src2var2metric2val = process_validation_metrics(data_sources, sample_inputs, reward_extra_infos_dict) 
+        # RZ: defaultdict(lambda: defaultdict(lambda: defaultdict(list))). data source ('math_dapo') -> variable ('acc', 'reward') -> metric ('mean@32', 'maj@32', 'best@32') -> value (list of float).
         metric_dict = {}
+
         for data_source, var2metric2val in data_src2var2metric2val.items():
             core_var = "acc" if "acc" in var2metric2val else "reward"
             for var_name, metric2val in var2metric2val.items():
@@ -649,7 +653,6 @@ class RayPPOTrainer:
                         metric_sec = "val-aux"
                     pfx = f"{metric_sec}/{data_source}/{var_name}/{metric_name}"
                     metric_dict[pfx] = metric_val
-
         return metric_dict
 
     def init_workers(self):
@@ -903,17 +906,11 @@ class RayPPOTrainer:
 
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
 
-                # pop those keys for generation
-                if "multi_modal_inputs" in batch.non_tensor_batch.keys():
-                    gen_batch = batch.pop(
-                        batch_keys=["input_ids", "attention_mask", "position_ids"],
-                        non_tensor_batch_keys=["raw_prompt_ids", "multi_modal_data", "multi_modal_inputs"],
-                    )
-                else:
-                    gen_batch = batch.pop(
-                        batch_keys=["input_ids", "attention_mask", "position_ids"],
-                        non_tensor_batch_keys=["raw_prompt_ids"],
-                    )
+                # pop those keys for generation # RZ: exclude the multi-modal inputs.
+                gen_batch = batch.pop(
+                    batch_keys=["input_ids", "attention_mask", "position_ids"],
+                    non_tensor_batch_keys=["raw_prompt_ids"],
+                )
 
                 is_last_step = self.global_steps >= self.total_training_steps
 

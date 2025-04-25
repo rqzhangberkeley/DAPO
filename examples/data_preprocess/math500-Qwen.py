@@ -32,8 +32,8 @@ def extract_solution(solution_str):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--local_dir', default='./data/math500')
-    parser.add_argument('--model_type', default='instruct')
+    parser.add_argument('--local_dir', default='./data/math500-Qwen-base')
+    parser.add_argument('--model_type', default='base')
     parser.add_argument('--hdfs_dir', default=None)
 
     args = parser.parse_args()
@@ -52,12 +52,12 @@ if __name__ == '__main__':
     test_dataset = Dataset.from_list(data_list)
 
 
-    instruction_following = "Solve the following math problem step by step. The last line of your response should be of the form Answer: $Answer (without quotes) where $Answer is the answer to the problem." 
+    instruction_following = "Let's think step by step and output the final answer within \\boxed{}."
 
     def make_map_fn(split):
         def process_fn(example, idx):
             question_raw = example.pop('problem')
-            question = instruction_following + '\n\n' + question_raw + '\n\n' + 'Remember to put your answer on its own line after "Answer:".'
+            question = question_raw + " " + instruction_following
             answer = example.pop('answer')
             solution = example.pop('solution')
             subject = example.pop('subject')
@@ -65,15 +65,17 @@ if __name__ == '__main__':
             unique_id = example.pop('unique_id')
 
             if args.model_type == 'base':
-                raise NotImplementedError("Base model is not supported for MATH500")
-            else:
+                prompt = question
+            elif args.model_type == 'instruct':
                 prompt = [{
                     "content": question,
                     "role": "user"
                 }]
+            else:
+                raise ValueError(f"Invalid model type: {args.model_type}")
 
             data = {
-                "data_source": "MATH500",
+                "data_source": "MATH500-Qwen-Instruct",
                 "prompt": prompt,
                 "ability": "math",
                 "reward_model": {

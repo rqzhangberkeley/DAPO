@@ -25,3 +25,11 @@ algorithm:
 
 trainer:
   project_name: verl-dapo
+
+curriculum:
+  enable: True
+  
+actor_rollout_ref:
+  rollout:
+    n: 4
+    n_continue: 12

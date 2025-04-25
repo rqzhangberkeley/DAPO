@@ -36,4 +36,7 @@ def compute_score(model_output: str, ground_truth: str, timeout_score: float = 0
     except TimeoutException:
         ret_score = timeout_score
 
-    return ret_score
+    return {
+        "score": ret_score,
+        "acc": ret_score
+    }

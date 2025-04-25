@@ -186,7 +186,7 @@ def calc_maj_val(data: list[dict[str, Any]], vote_key: str, val_key: str) -> flo
 
     return maj_val
 
-
+# RZ: This is a very good examples haha.
 def process_validation_metrics(
     data_sources: list[str], sample_inputs: list[str], infos_dict: dict[str, list[Any]], seed: int = 42
 ) -> dict[str, dict[str, dict[str, float]]]:
@@ -222,7 +222,7 @@ def process_validation_metrics(
 
                 ns = []
                 n = 2
-                while n < n_resps:
+                while n < n_resps: # RZ: Find the largest power of 2 that is less than n_resps. Then compute BoN and WoN.
                     ns.append(n)
                     n *= 2
                 ns.append(n_resps)
@@ -262,3 +262,8 @@ def process_validation_metrics(
                 data_src2var2metric2val[data_source][var_name][metric_name] = np.mean(prompt_vals)
 
     return data_src2var2metric2val
+
+# RZ: What is the difference between defaultdict(lambda: defaultdict(lambda: defaultdict(list))) and defaultdict(defaultdict(defaultdict(dict)))?
+# The previious one is valid while the second one is not.
+# The lambda functions ensure that a new defaultdict is created each time a missing key is accessed
+# In the second instance, The inner defaultdict() calls are executed immediately at creation time. defaultdict() expects a (callable) factory function as its argument, not an instance. This would try to call defaultdict as a function rather than using it as a factory
