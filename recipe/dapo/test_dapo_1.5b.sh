@@ -51,7 +51,8 @@ GPUS_PER_NODE=${GPUS_PER_NODE:-4}
 # Paths
 MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-1.5B"}
 TRAIN_FILE=${TRAIN_FILE:-"./data/DAPO-17k-Qwen-base/train.parquet"} # We test on MATH500 dataset first.
-TEST_FILE=${TEST_FILE:-"./data/AIME-Qwen-base/train.parquet"}
+TEST_FILE=${TEST_FILE:-"./data/AIME-Qwen-base
+/train.parquet"}
 
 # Algorithm
 temperature=1.0
