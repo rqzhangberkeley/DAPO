@@ -8,6 +8,7 @@ defaults:
 
 data:
   gen_batch_size: ${data.train_batch_size}
+  use_chat_template: True # RZ: Added by RZ.
 
 reward_model:
   reward_manager: dapo

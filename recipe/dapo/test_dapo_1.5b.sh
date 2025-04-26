@@ -11,7 +11,7 @@ export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 # RZ: Override the max_position_embedding
 wandb login 363018e9dc8339fae726d3b48a839f262c457194
 
 project_name='DAPO'
-exp_name='DAPO-Qwen2.5-1.5B-valid'
+exp_name='DAPO-test'
 
 adv_estimator=rloo
 use_kl_in_reward=False
@@ -52,6 +52,8 @@ NNODES=${NNODES:-1}
 GPUS_PER_NODE=${GPUS_PER_NODE:-4}
 # Paths
 MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-1.5B"}
+use_chat_template=False
+
 CKPT_PATH=${CKPT_PATH:-"/work/nvme/bdwy/rzhang15/ckpts/DAPO"}
 TRAIN_FILE=${TRAIN_FILE:-"./data/DAPO-split-Qwen-base/train.parquet"}
 TEST_FILE=${TEST_FILE:-"./data/DAPO-split-Qwen-base/test.parquet"}
@@ -80,6 +82,7 @@ python3 -m recipe.dapo.src.main_dapo \
     data.gen_batch_size=${gen_prompt_bsz} \
     data.train_batch_size=${train_prompt_bsz} \
     data.truncation='left' \
+    data.use_chat_template=${use_chat_template} \
     actor_rollout_ref.rollout.n=${n_resp_per_prompt} \
     actor_rollout_ref.rollout.n_continue=${n_resp_continue} \
     actor_rollout_ref.actor.use_kl_loss=${use_kl_loss} \
@@ -153,3 +156,6 @@ python3 -m recipe.dapo.src.main_dapo \
 
 # run
 # ./recipe/dapo/test_dapo_1.5b.sh
+
+# Run with nohup and redirect output to log file
+# nohup ./recipe/dapo/test_dapo_1.5b.sh > ./logs/test_dapo_1.5b.log 2>&1 &

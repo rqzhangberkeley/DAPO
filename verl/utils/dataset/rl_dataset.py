@@ -60,6 +60,7 @@ class RLHFDataset(Dataset):
         tokenizer: PreTrainedTokenizer,
         config: DictConfig,
         processor: Optional[ProcessorMixin] = None,
+        use_chat_template: bool = True, # RZ: Added by RZ.
     ):
         if not isinstance(data_files, (List, ListConfig)):
             data_files = [data_files]
@@ -86,6 +87,8 @@ class RLHFDataset(Dataset):
         # whether to store the dataset in state_dict()
         # default not store
         self.serialize_dataset = False
+        # RZ: Added by RZ.
+        self.use_chat_template = use_chat_template
         self._download()
         self._read_files_and_tokenize()
 
@@ -110,12 +113,19 @@ class RLHFDataset(Dataset):
         if self.filter_overlong_prompts:
             tokenizer = self.tokenizer
             prompt_key = self.prompt_key
-            self.dataframe = self.dataframe.filter(
-                lambda doc: len(tokenizer.apply_chat_template(doc[prompt_key], add_generation_prompt=True))
-                <= self.max_prompt_length,
-                num_proc=self.num_workers,
-                desc=f"Filtering prompts longer than {self.max_prompt_length} tokens",
-            )
+            if self.use_chat_template:
+                self.dataframe = self.dataframe.filter(
+                    lambda doc: len(tokenizer.apply_chat_template(doc[prompt_key], add_generation_prompt=True))
+                    <= self.max_prompt_length,
+                    num_proc=self.num_workers,
+                    desc=f"Filtering prompts longer than {self.max_prompt_length} tokens",
+                )
+            else:
+                self.dataframe = self.dataframe.filter(
+                    lambda doc: len(doc[prompt_key]) <= self.max_prompt_length,
+                    num_proc=self.num_workers,
+                    desc=f"Filtering prompts longer than {self.max_prompt_length} tokens",
+                )
 
             print(f"filter dataset len: {len(self.dataframe)}")
 
@@ -160,8 +170,11 @@ class RLHFDataset(Dataset):
 
         if self.processor is not None:
             from verl.utils.dataset.vision_utils import process_image, process_video
+            if self.use_chat_template:
+                raw_prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+            else:
+                raw_prompt = messages
 
-            raw_prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
             multi_modal_data = {}
 
             images = None
@@ -190,7 +203,11 @@ class RLHFDataset(Dataset):
             row_dict["multi_modal_inputs"].pop("second_per_grid_ts", None)
 
         else:
-            raw_prompt = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+            if self.use_chat_template:
+                raw_prompt = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+            else:
+                raw_prompt = messages
+
             model_inputs = self.tokenizer(raw_prompt, return_tensors="pt", add_special_tokens=False)
             input_ids = model_inputs.pop("input_ids")
             attention_mask = model_inputs.pop("attention_mask")

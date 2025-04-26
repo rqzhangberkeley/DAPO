@@ -473,6 +473,7 @@ class RayPPOTrainer:
             tokenizer=self.tokenizer,
             processor=self.processor,
             config=self.config.data,
+            use_chat_template=self.config.data.use_chat_template, # RZ: Added by RZ.
         )
 
         # use sampler for better ckpt resume
@@ -497,6 +498,7 @@ class RayPPOTrainer:
             tokenizer=self.tokenizer,
             processor=self.processor,
             config=self.config.data,
+            use_chat_template=self.config.data.use_chat_template, # RZ: Added by RZ.
         )
         # consider the design of single controller with a large val dataset in multi-modal scenarios
         # may lead to oom issues
