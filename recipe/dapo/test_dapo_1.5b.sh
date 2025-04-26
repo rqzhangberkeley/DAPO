@@ -38,6 +38,7 @@ gen_prompt_bsz=256
 train_prompt_mini_bsz=16
 n_resp_per_prompt=4
 n_resp_continue=12
+n_resp_per_prompt_val=32
 total_epochs=1
 enable_curriculum=True
 val_before_train=True
@@ -51,12 +52,13 @@ RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
 NNODES=${NNODES:-1}
 GPUS_PER_NODE=${GPUS_PER_NODE:-4}
 # Paths
-MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-1.5B"}
-use_chat_template=False
+MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-Math-1.5B"}
+use_chat_template=True
+val_only=True
 
 CKPT_PATH=${CKPT_PATH:-"/work/nvme/bdwy/rzhang15/ckpts/DAPO"}
-TRAIN_FILE=${TRAIN_FILE:-"./data/DAPO-split-Qwen-base/train.parquet"}
-TEST_FILE=${TEST_FILE:-"./data/DAPO-split-Qwen-base/test.parquet"}
+TRAIN_FILE=${TRAIN_FILE:-"./data/DAPO-unique-Qwen-instruct/train.parquet"}
+TEST_FILE=${TEST_FILE:-"./data/DAPO-unique-Qwen-instruct/test.parquet"}
 
 # Algorithm
 temperature=1.0
@@ -131,7 +133,7 @@ python3 -m recipe.dapo.src.main_dapo \
     actor_rollout_ref.rollout.val_kwargs.top_p=${top_p} \
     actor_rollout_ref.rollout.val_kwargs.top_k=${top_k} \
     actor_rollout_ref.rollout.val_kwargs.do_sample=True \
-    actor_rollout_ref.rollout.val_kwargs.n=1 \
+    actor_rollout_ref.rollout.val_kwargs.n=${n_resp_per_prompt_val} \
     actor_rollout_ref.ref.log_prob_micro_batch_size=${infer_micro_batch_size} \
     actor_rollout_ref.ref.fsdp_config.param_offload=${offload} \
     actor_rollout_ref.ref.ulysses_sequence_parallel_size=1 \
@@ -150,6 +152,7 @@ python3 -m recipe.dapo.src.main_dapo \
     trainer.save_freq=${save_freq} \
     trainer.total_epochs=${total_epochs} \
     trainer.resume_mode=disable \
+    +trainer.val_only=${val_only} \
     trainer.max_actor_ckpt_to_keep=${max_ckpt_to_keep} \
     trainer.max_critic_ckpt_to_keep=${max_ckpt_to_keep} \
     curriculum.enable=${enable_curriculum}

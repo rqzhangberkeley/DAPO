@@ -215,7 +215,6 @@ def process_validation_metrics(
             for var_name, var_vals in var2vals.items():
                 if isinstance(var_vals[0], str):
                     continue
-                
                 #  example: data_source: 'guanning/dapo17k', var_name: 'reward', prompt: A string.
                 metric = {}
                 n_resps = len(var_vals)
@@ -262,6 +261,7 @@ def process_validation_metrics(
         for var_name, metric2prompt_vals in var2metric2prompt_vals.items():
             for metric_name, prompt_vals in metric2prompt_vals.items():
                 data_src2var2metric2val[data_source][var_name][metric_name] = np.mean(prompt_vals)
+    breakpoint()
 
     return data_src2var2metric2val
 
