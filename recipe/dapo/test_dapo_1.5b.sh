@@ -11,7 +11,7 @@ export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 # RZ: Override the max_position_embedding
 wandb login 363018e9dc8339fae726d3b48a839f262c457194
 
 project_name='DAPO'
-exp_name='DAPO-Qwen2.5-1.5B'
+exp_name='DAPO-Qwen2.5-1.5B-valid'
 
 adv_estimator=rloo
 use_kl_in_reward=False
@@ -33,14 +33,16 @@ loss_agg_mode="token-mean"
 enable_filter_groups=True # Whether we filter the prompts base on the pass rates.
 filter_groups_metric=acc # The metric to filter the prompts.
 max_num_gen_batches=50 # The maximum number of generations to generate. If we exceed this number, we will stop generating and raise error.
-train_prompt_bsz=16
+train_prompt_bsz=64
 gen_prompt_bsz=256
-train_prompt_mini_bsz=4
+train_prompt_mini_bsz=16
 n_resp_per_prompt=4
 n_resp_continue=12
 total_epochs=1
 enable_curriculum=True
 val_before_train=True
+save_freq=50
+max_ckpt_to_keep=2
 
 # Ray
 RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
@@ -50,9 +52,9 @@ NNODES=${NNODES:-1}
 GPUS_PER_NODE=${GPUS_PER_NODE:-4}
 # Paths
 MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-1.5B"}
-TRAIN_FILE=${TRAIN_FILE:-"./data/DAPO-17k-Qwen-base/train.parquet"} # We test on MATH500 dataset first.
-TEST_FILE=${TEST_FILE:-"./data/AIME-Qwen-base
-/train.parquet"}
+CKPT_PATH=${CKPT_PATH:-"/work/nvme/bdwy/rzhang15/ckpts/DAPO"}
+TRAIN_FILE=${TRAIN_FILE:-"./data/DAPO-split-Qwen-base/train.parquet"}
+TEST_FILE=${TEST_FILE:-"./data/DAPO-split-Qwen-base/test.parquet"}
 
 # Algorithm
 temperature=1.0
@@ -142,9 +144,11 @@ python3 -m recipe.dapo.src.main_dapo \
     trainer.nnodes="${NNODES}" \
     trainer.val_before_train=${val_before_train} \
     trainer.test_freq=2 \
-    trainer.save_freq=-1 \
+    trainer.save_freq=${save_freq} \
     trainer.total_epochs=${total_epochs} \
     trainer.resume_mode=disable \
+    trainer.max_actor_ckpt_to_keep=${max_ckpt_to_keep} \
+    trainer.max_critic_ckpt_to_keep=${max_ckpt_to_keep} \
     curriculum.enable=${enable_curriculum}
 
 # run

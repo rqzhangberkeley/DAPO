@@ -19,7 +19,7 @@ def _default_compute_score(data_source, solution_str, ground_truth, extra_info=N
         from . import gsm8k
 
         res = gsm8k.compute_score(solution_str, ground_truth)
-    elif data_source in ["lighteval/MATH", "DigitalLearningGmbH/MATH-lighteval", 'MATH500-Qwen-Instruct', 'math_dapo-Qwen-Instruct', 'AIME-Qwen-Instruct', 'AIME-Qwen-base', 'MATH500-Qwen-base', 'math_dapo-Qwen-base']:
+    elif data_source in ["lighteval/MATH", "DigitalLearningGmbH/MATH-lighteval", 'MATH500-Qwen-Instruct', 'math_dapo-Qwen-Instruct', 'AIME-Qwen-Instruct', 'AIME-Qwen-base', 'MATH500-Qwen-base', 'math_dapo-Qwen-base', 'guanning/dapo17k']:
         # from . import math
 
         # res = math.compute_score(solution_str, ground_truth)

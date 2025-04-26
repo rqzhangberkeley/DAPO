@@ -75,7 +75,7 @@ if __name__ == '__main__':
                 raise ValueError(f"Invalid model type: {args.model_type}")
 
             data = {
-                "data_source": "MATH500-Qwen-Instruct",
+                "data_source": "MATH500-Qwen-base",
                 "prompt": prompt,
                 "ability": "math",
                 "reward_model": {

@@ -31,61 +31,62 @@ def extract_solution(solution_str):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--local_dir', default='./data/AIME-Qwen-base')
+    parser.add_argument('--local_dir', default='./data/DAPO-split-Qwen-base')
     parser.add_argument('--model_type', default='base')
     parser.add_argument('--hdfs_dir', default=None)
 
     args = parser.parse_args()
 
-    data_source = 'BytedTsinghua-SIA/AIME-2024'
+    data_source = 'guanning/dapo17k'
     print(f"Loading the {data_source} dataset from huggingface...", flush=True)
     dataset = datasets.load_dataset(data_source, trust_remote_code=True)
-    instruction_following = "Let's think step by step and output the final answer within \\boxed{}." 
 
     train_dataset = dataset['train']
+    test_dataset = dataset['test']
+    instruction_following = "Let's think step by step and output the final answer within \\boxed{}."
 
     # add a row to each data item that represents a unique id
     def make_map_fn(split):
 
         def process_fn(example, idx):
-            
-            data_source = example.pop('data_source')
-            prompt = example.pop('prompt') # There are instructions in the prompt.
-            question_raw = prompt[0]['content']
-            question_raw = question_raw.replace('Solve the following math problem step by step. The last line of your response should be of the form Answer: $Answer (without quotes) where $Answer is the answer to the problem.\n\n', '')
-            question_raw = question_raw.replace('\n\nRemember to put your answer on its own line after "Answer:".', '')
-            question = question_raw + " " + instruction_following
+            question = example.pop('problem')
+            question = question + ' ' + instruction_following
+            answer = example.pop('answer')
             if args.model_type == 'base':
                 prompt = question
             elif args.model_type == 'instruct':
                 prompt = [{
-                    "content":question,
+                    "content": question,
                     "role": "user"
                 }]
             else:
                 raise ValueError(f"Invalid model type: {args.model_type}")
 
-            ability = example.pop('ability')
-            reward_model = example.pop('reward_model')
-            extra_info = example.pop('extra_info')
             data = {
-                "data_source": data_source+'-Qwen-base',
-                "prompt": prompt, # the system prompt is different from the one in MATH dataset.
-                "ability": ability,
-                "reward_model": reward_model,
-                "extra_info": extra_info
+                "data_source": data_source,
+                "prompt": prompt,
+                "ability": "math",
+                "reward_model": {
+                    "style": "rule",
+                    "ground_truth": answer
+                },
+                "extra_info": {
+                    'split': split,
+                    'index': idx
+                }
             }
             return data
         return process_fn
 
     # Map the full dataset first
     train_dataset = train_dataset.map(function=make_map_fn('train'), with_indices=True)
+    test_dataset = test_dataset.map(function=make_map_fn('test'), with_indices=True)
 
     local_dir = args.local_dir
     hdfs_dir = args.hdfs_dir
 
     train_dataset.to_parquet(os.path.join(local_dir, 'train.parquet'))
-
+    test_dataset.to_parquet(os.path.join(local_dir, 'test.parquet'))
     if hdfs_dir is not None:
         makedirs(hdfs_dir)
 

@@ -69,7 +69,7 @@ if __name__ == '__main__':
             reward_model = example.pop('reward_model')
             extra_info = example.pop('extra_info')
             data = {
-                "data_source": data_source+'-Qwen-Instruct',
+                "data_source": data_source+'-Qwen-base',
                 "prompt": prompt, # the system prompt is different from the one in MATH dataset.
                 "ability": ability,
                 "reward_model": reward_model,
