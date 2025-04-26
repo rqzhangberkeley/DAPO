@@ -281,33 +281,6 @@ class RayDAPOTrainer(RayPPOTrainer):
                                 metrics.update({f"curriculum_{k}": v for k, v in kl_continue_metrics.items()})
                             else:
                                 continue_batch.batch["token_level_rewards"] = continue_batch.batch["token_level_scores"]
-                            
-                            # # Calculate and log accuracy metrics for curriculum responses
-                            # if "seq_final_reward" in continue_batch.non_tensor_batch or "seq_reward" in continue_batch.non_tensor_batch:
-                            #     metric_name = "seq_final_reward" if "seq_final_reward" in continue_batch.non_tensor_batch else "seq_reward"
-                            #     # Turn to numpy for easier computation if not already
-                            #     if metric_name not in continue_batch.non_tensor_batch:
-                            #         continue_batch.non_tensor_batch[metric_name] = (
-                            #             continue_batch.batch["token_level_rewards"].sum(dim=-1).numpy()
-                            #         )
-                                
-                            #     # Check accuracy across prompts
-                            #     prompt_uid2metric_vals = defaultdict(list)
-                            #     for uid, metric_val in zip(
-                            #         continue_batch.non_tensor_batch["uid"], continue_batch.non_tensor_batch[metric_name]
-                            #     ):
-                            #         prompt_uid2metric_vals[uid].append(metric_val)
-                                
-                            #     # Calculate average accuracy for continuing responses
-                            #     accuracies = []
-                            #     for uid, metric_vals in prompt_uid2metric_vals.items():
-                            #         # Assuming binary accuracy where values > 0 are correct
-                            #         accuracy = sum(1 for val in metric_vals if val > 0) / len(metric_vals)
-                            #         accuracies.append(accuracy)
-                                
-                            #     avg_accuracy = sum(accuracies) / len(accuracies) if accuracies else 0
-                            #     metrics["curriculum/continue_accuracy"] = avg_accuracy
-                            #     print(f"Curriculum continue accuracy: {avg_accuracy:.4f}")
                         
                         # Combine the original batch with the new generations
                         combined_batch = DataProto.concat([batch, continue_batch])
