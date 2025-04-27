@@ -81,8 +81,8 @@ def process_single_dataset(dataset, test_size=1000, seed=42):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--local_dir', default='./data/DAPO-unique-Qwen-instruct')
-    parser.add_argument('--model_type', default='instruct')
+    parser.add_argument('--local_dir', default='./data/DAPO-unique-Qwen-base')
+    parser.add_argument('--model_type', default='base')
     parser.add_argument('--hdfs_dir', default=None)
 
     args = parser.parse_args()
@@ -118,7 +118,7 @@ if __name__ == '__main__':
                 raise ValueError(f"Invalid model type: {args.model_type}")
 
             data = {
-                "data_source": 'math_dapo-Qwen-Instruct',
+                "data_source": 'math_dapo-Qwen-base',
                 "prompt": prompt,
                 "ability": "math",
                 "reward_model": example['reward_model'],

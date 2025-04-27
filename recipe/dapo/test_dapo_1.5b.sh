@@ -11,7 +11,7 @@ export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 # RZ: Override the max_position_embedding
 wandb login 363018e9dc8339fae726d3b48a839f262c457194
 
 project_name='DAPO'
-exp_name='DAPO-test'
+exp_name='RUN-1.5B-trainDAPO-testMATH500-NoCL'
 
 adv_estimator=rloo
 use_kl_in_reward=False
@@ -22,7 +22,7 @@ clip_ratio_low=0.2
 clip_ratio_high=0.28
 
 max_prompt_length=1024
-max_response_length=2048
+max_response_length=3072
 max_num_batched_tokens=8192
 enable_overlong_buffer=False
 overlong_buffer_len=512
@@ -33,16 +33,16 @@ loss_agg_mode="token-mean"
 enable_filter_groups=True # Whether we filter the prompts base on the pass rates.
 filter_groups_metric=acc # The metric to filter the prompts.
 max_num_gen_batches=50 # The maximum number of generations to generate. If we exceed this number, we will stop generating and raise error.
-train_prompt_bsz=64
-gen_prompt_bsz=256
+train_prompt_bsz=32
+gen_prompt_bsz=128
 train_prompt_mini_bsz=16
 n_resp_per_prompt=4
 n_resp_continue=12
-n_resp_per_prompt_val=32
-total_epochs=1
-enable_curriculum=True
+n_resp_per_prompt_val=1
+total_epochs=10
+enable_curriculum=False
 val_before_train=True
-save_freq=50
+save_freq=30
 max_ckpt_to_keep=2
 
 # Ray
@@ -52,13 +52,13 @@ RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
 NNODES=${NNODES:-1}
 GPUS_PER_NODE=${GPUS_PER_NODE:-4}
 # Paths
-MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-Math-1.5B"}
-use_chat_template=True
-val_only=True
+MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-1.5B"}
+use_chat_template=False
+val_only=False
 
 CKPT_PATH=${CKPT_PATH:-"/work/nvme/bdwy/rzhang15/ckpts/DAPO"}
-TRAIN_FILE=${TRAIN_FILE:-"./data/DAPO-unique-Qwen-instruct/train.parquet"}
-TEST_FILE=${TEST_FILE:-"./data/DAPO-unique-Qwen-instruct/test.parquet"}
+TRAIN_FILE=${TRAIN_FILE:-"./data/DAPO-unique-Qwen-base/train.parquet"}
+TEST_FILE=${TEST_FILE:-"./data/DAPO-unique-Qwen-base/test.parquet"}
 
 # Algorithm
 temperature=1.0
@@ -74,7 +74,7 @@ offload=False
 # ray job submit --no-wait --runtime-env="${RUNTIME_ENV}" \
 #     --working-dir "${WORKING_DIR}" \
 #     -- 
-python3 -m recipe.dapo.src.main_dapo \
+PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_dapo \
     data.train_files="${TRAIN_FILE}" \
     data.val_files="${TEST_FILE}" \
     data.prompt_key=prompt \
@@ -155,7 +155,7 @@ python3 -m recipe.dapo.src.main_dapo \
     +trainer.val_only=${val_only} \
     trainer.max_actor_ckpt_to_keep=${max_ckpt_to_keep} \
     trainer.max_critic_ckpt_to_keep=${max_ckpt_to_keep} \
-    curriculum.enable=${enable_curriculum}
+    curriculum.enable=${enable_curriculum} | tee ./logs/${exp_name}_$(id -u).log
 
 # run
 # ./recipe/dapo/test_dapo_1.5b.sh
