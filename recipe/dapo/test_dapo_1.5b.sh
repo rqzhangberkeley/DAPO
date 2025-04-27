@@ -42,7 +42,7 @@ n_resp_per_prompt_val=1
 total_epochs=10
 enable_curriculum=False
 val_before_train=True
-save_freq=30
+save_freq=-1
 max_ckpt_to_keep=2
 
 # Ray
