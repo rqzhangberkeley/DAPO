@@ -37,6 +37,10 @@ max_num_gen_batches: the maximum number of generation batches we try to generate
 
 ```
 
+#### Implementation
+- The naive implementation will call 2 vLLM instances. However, this is not efficient. So we call 1 vLLM instance and use the `generate_sequences()` function to generate the responses.
+- This is done by combining the second generation stage in this step with the first generation stage in the next step when calling the `generate_sequences()` function.
+
 #### Detailed Edits to the Codebase
 - We add `data.use_chat_template` to denote whether we use the chat template for the base model. This needs to edit the `RLHFDataset.__getitem__` function and the truncation part.
 - Since we do not use the DAPO's prompt, we need to change the reward function. This can be doneby editing the function in `verl/utils/reward_score/__init__.py`. We use the `math_verify.compute_score()` function to compute the score.
