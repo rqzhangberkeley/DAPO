@@ -1,14 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name=1.5B-DAPO-MATH       # Job name
-#SBATCH --output=./logs/rloo_dapo_math_1.5B_%j.out  # Output file (%j will be replaced by job ID)
-#SBATCH --error=./logs/rloo_dapo_math_1.5B_%j.err   # Error file
+#SBATCH --job-name=1.5B-DAPO-MATH-noCL-largeBSZ       # Job name
+#SBATCH --output=./logs/rloo_dapo_math_nocl_largebsz_1.5B_%j.out  # Output file (%j will be replaced by job ID)
+#SBATCH --error=./logs/rloo_dapo_math_nocl_largebsz_1.5B_%j.err   # Error file
 #SBATCH --nodes=1                 # Number of nodes
 #SBATCH --ntasks-per-node=1       # Number of tasks per node
 #SBATCH --cpus-per-task=256         # Number of CPU cores per task
 #SBATCH --gpus-per-node=4              # Number of GPUs (4 GPUs per node)
 #SBATCH --mem=500G                # Memory per node
 #SBATCH --time=1-00:00:00           # Time limit (24 hours)
-#SBATCH --account=bdwy-dtai-gh    # Account name (adjust to your account)
+#SBATCH --account=beok-dtai-gh    # Account name (adjust to your account)
 #SBATCH --mail-user=rqzhang@berkeley.edu  # Email address to receive notifications
 #SBATCH --mail-type=BEGIN,END,FAIL         # Send email at begin, end, or fail of job
 
@@ -25,7 +25,7 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
 export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 # RZ: Override the max_position_embeddings for -Math-1.5B and -Math-7B models (4096 for the math models). This allows the model to accept context lengths larger than the model’s default maximum. But this seems does not work.
 
 project_name='DAPO'
-exp_name='RUN-1.5B-trainDAPO-testMATH500'
+exp_name='RUN-1.5B-trainDAPO-testMATH-noCL-large-bsz'
 
 adv_estimator=rloo
 use_kl_in_reward=False
@@ -47,16 +47,16 @@ loss_agg_mode="token-mean"
 enable_filter_groups=True # Whether we filter the prompts base on the pass rates.
 filter_groups_metric=acc # The metric to filter the prompts.
 max_num_gen_batches=50 # The maximum number of generations to generate. If we exceed this number, we will stop generating and raise error.
-train_prompt_bsz=32
-gen_prompt_bsz=128
-train_prompt_mini_bsz=16
-n_resp_per_prompt=4
+train_prompt_bsz=512
+gen_prompt_bsz=1536
+train_prompt_mini_bsz=32
+n_resp_per_prompt=16
 n_resp_continue=12
-n_resp_per_prompt_val=1
+n_resp_per_prompt_val=4
 total_epochs=10
-enable_curriculum=True
+enable_curriculum=False
 val_before_train=True
-save_freq=30
+save_freq=-1
 max_ckpt_to_keep=2
 
 # Ray
@@ -71,7 +71,7 @@ use_chat_template=False
 val_only=False
 
 CKPT_PATH=${CKPT_PATH:-"/work/nvme/bdwy/rzhang15/ckpts/DAPO"}
-TRAIN_FILE=${TRAIN_FILE:-"./data/DAPO-unique-Qwen-base/train.parquet"}
+TRAIN_FILE=${TRAIN_FILE:-"./data/DAPO-17k-Qwen-base/train.parquet"}
 TEST_FILE=${TEST_FILE:-"./data/math500-Qwen-base/test.parquet"}
 
 # Algorithm

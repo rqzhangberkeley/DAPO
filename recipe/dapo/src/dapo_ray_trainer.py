@@ -20,6 +20,7 @@ import uuid
 from collections import defaultdict
 from copy import deepcopy
 from pprint import pprint
+import time
 
 import numpy as np
 import torch
@@ -100,8 +101,11 @@ class RayDAPOTrainer(RayPPOTrainer):
 
                 with _timer("step", timing_raw):
                     # generate a batch
+                    gen_start_time = time.time()
                     with _timer("gen", timing_raw):
                         gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch) # DataProto with only batch, and the non_tensor_batch an meta_info are enpty.
+                    gen_end_time = time.time()
+                    print(f"Time taken for generation: {gen_end_time - gen_start_time} seconds")
 
                     if self.config.algorithm.adv_estimator== AdvantageEstimator.REMAX:
                         raise NotImplementedError
@@ -217,6 +221,10 @@ class RayDAPOTrainer(RayPPOTrainer):
                             print(f"{num_gen_batches=}. We have enought prompts for training. We have {num_prompt_in_batch=} prompts in the batch.")
                             traj_bsz = self.config.data.train_batch_size * self.config.actor_rollout_ref.rollout.n
                             batch = batch[:traj_bsz]
+                            print(f'Size = {batch.batch["input_ids"].shape=}')
+                            print(f'non_tensor_batch = {batch.non_tensor_batch.keys()=}')
+                            print(f'meta_info = {batch.meta_info.keys()=}')
+                            print(f'uids = {batch.non_tensor_batch["uid"]}')
 
                     # Curriculum learning implementation
                     if self.config.curriculum.enable:
@@ -236,9 +244,12 @@ class RayDAPOTrainer(RayPPOTrainer):
                         )
                         
                         # Generate additional n_continue responses for each qualified prompt
+                        gen_continue_start_time = time.time()
                         with _timer("gen-continue", timing_raw):
                             gen_batch.meta_info["continue"] = True  # Set continue flag in meta_info
                             gen_batch_continue_output = self.actor_rollout_wg.generate_sequences(gen_batch)
+                        gen_continue_end_time = time.time()
+                        print(f"Time taken for generation of continue: gen_continue_{gen_continue_end_time - gen_continue_start_time} seconds")
                         
                         # Create a new batch with the original prompts and the newly generated responses
                         # First, make copies of the prompts for each new generation
@@ -322,15 +333,21 @@ class RayDAPOTrainer(RayPPOTrainer):
                     batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
 
                     # recompute old_log_probs
+                    old_log_prob_start_time = time.time()
                     with _timer("old_log_prob", timing_raw):
                         old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
                         batch = batch.union(old_log_prob)
+                    old_log_prob_end_time = time.time()
+                    print(f"Time taken for old_log_prob: old_log_prob_{old_log_prob_end_time - old_log_prob_start_time} seconds")
 
+                    ref_start_time = time.time()
                     if self.use_reference_policy:
                         # compute reference log_prob
                         with _timer("ref", timing_raw):
                             ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
                             batch = batch.union(ref_log_prob)
+                    ref_end_time = time.time()
+                    print(f"Time taken for ref: ref_{ref_end_time - ref_start_time} seconds")
 
                     # compute values
                     if self.use_critic:
@@ -338,6 +355,7 @@ class RayDAPOTrainer(RayPPOTrainer):
                             values = self.critic_wg.compute_values(batch)
                             batch = batch.union(values)
 
+                    adv_start_time = time.time()
                     with _timer("adv", timing_raw):
                         # compute advantages, executed on the driver process
                         norm_adv_by_std_in_grpo = self.config.algorithm.get("norm_adv_by_std_in_grpo", True)
@@ -349,6 +367,8 @@ class RayDAPOTrainer(RayPPOTrainer):
                             num_repeat=self.config.actor_rollout_ref.rollout.n,
                             norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
                         )
+                    adv_end_time = time.time()
+                    print(f"Time taken for adv: adv_{adv_end_time - adv_start_time} seconds")
 
                     # update critic
                     if self.use_critic:
@@ -358,12 +378,15 @@ class RayDAPOTrainer(RayPPOTrainer):
                         metrics.update(critic_output_metrics)
 
                     # implement critic warmup
+                    update_actor_start_time = time.time()
                     if self.config.trainer.critic_warmup <= self.global_steps:
                         # update actor
                         with _timer("update_actor", timing_raw):
                             actor_output = self.actor_rollout_wg.update_actor(batch)
                         actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                         metrics.update(actor_output_metrics)
+                    update_actor_end_time = time.time()
+                    print(f"Time taken for update_actor: update_actor_{update_actor_end_time - update_actor_start_time} seconds")
 
                     # validate
                     if (

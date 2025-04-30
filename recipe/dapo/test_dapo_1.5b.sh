@@ -5,13 +5,14 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
 export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 # RZ: Override the max_position_embeddings for -Math-1.5B and -Math-7B models (4096 for the math models). This allows the model to accept context lengths larger than the model’s default maximum. But this seems does not work.
 
 # module default
-# module load cuda/12.6.1
-# module load gcc/11.4.0
+module load cuda/12.6.1
+module load gcc/11.4.0
+# conda init
 # conda activate verl
 wandb login 363018e9dc8339fae726d3b48a839f262c457194
 
 project_name='DAPO'
-exp_name='RUN-1.5B-trainDAPO-testMATH500-NoCL'
+exp_name='test-1.5B-time-noCL-DAPO-DAPO'
 
 adv_estimator=rloo
 use_kl_in_reward=False
@@ -33,15 +34,15 @@ loss_agg_mode="token-mean"
 enable_filter_groups=True # Whether we filter the prompts base on the pass rates.
 filter_groups_metric=acc # The metric to filter the prompts.
 max_num_gen_batches=50 # The maximum number of generations to generate. If we exceed this number, we will stop generating and raise error.
-train_prompt_bsz=32
-gen_prompt_bsz=128
+train_prompt_bsz=16
+gen_prompt_bsz=64
 train_prompt_mini_bsz=16
-n_resp_per_prompt=4
+n_resp_per_prompt=16
 n_resp_continue=12
-n_resp_per_prompt_val=1
+n_resp_per_prompt_val=4
 total_epochs=10
 enable_curriculum=False
-val_before_train=True
+val_before_train=False
 save_freq=-1
 max_ckpt_to_keep=2
 
