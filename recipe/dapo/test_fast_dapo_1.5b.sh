@@ -34,11 +34,11 @@ loss_agg_mode="token-mean"
 enable_filter_groups=True # Whether we filter the prompts base on the pass rates.
 filter_groups_metric=acc # The metric to filter the prompts.
 max_num_gen_batches=50 # The maximum number of generations to generate. If we exceed this number, we will stop generating and raise error.
-train_prompt_bsz=4
-gen_prompt_bsz=16
+train_prompt_bsz=64
+gen_prompt_bsz=320
 train_prompt_mini_bsz=4
 n_resp_per_prompt=4
-n_resp_continue=12
+n_resp_continue=16
 n_resp_per_prompt_val=4
 total_epochs=10
 enable_curriculum=True
@@ -75,7 +75,7 @@ offload=False
 # ray job submit --no-wait --runtime-env="${RUNTIME_ENV}" \
 #     --working-dir "${WORKING_DIR}" \
 #     -- 
-PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_dapo \
+PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_fast_dapo \
     data.train_files="${TRAIN_FILE}" \
     data.val_files="${TEST_FILE}" \
     data.prompt_key=prompt \
@@ -143,7 +143,7 @@ PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_dapo \
     reward_model.overlong_buffer.enable=${enable_overlong_buffer} \
     reward_model.overlong_buffer.len=${overlong_buffer_len} \
     reward_model.overlong_buffer.penalty_factor=${overlong_penalty_factor} \
-    trainer.logger=['console'] \
+    trainer.logger=['console','wandb'] \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
@@ -162,4 +162,4 @@ PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_dapo \
 # ./recipe/dapo/test_dapo_1.5b.sh
 
 # Run with nohup and redirect output to log file
-# nohup ./recipe/dapo/test_dapo_1.5b.sh > ./logs/test_dapo_1.5b.log 2>&1 &
+# nohup ./recipe/dapo/test_fast_dapo_1.5b.sh > ./logs/test_fast_dapo_1.5b.log 2>&1 &

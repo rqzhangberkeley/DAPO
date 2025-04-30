@@ -27,6 +27,7 @@ When working with Megatron:
 
 import logging
 import os
+import numpy as np
 from contextlib import contextmanager
 from copy import deepcopy
 from typing import List
@@ -44,6 +45,8 @@ from verl.third_party.vllm import parallel_state as vllm_ps
 from verl.utils.debug import GPUMemoryLogger
 from verl.utils.torch_functional import get_response_mask, pad_sequence_to_length
 from verl.workers.rollout.base import BaseRollout
+
+from vllm.inputs import TokensPrompt
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
@@ -182,6 +185,20 @@ class vLLMRollout(BaseRollout):
         # if len(old_sampling_params_args):
         for key, value in old_sampling_params_args.items():
             setattr(self.sampling_params, key, value)
+            # RZ: restore the old sampling params so that after using the new sampling params, we can roll back to the old sampling params.
+
+    def create_new_sampling_params(self, **kwargs):
+        new_kwargs = dict(
+            n=1,
+            logprobs=0,  # can be set to 0 and let actor to recompute
+            max_tokens=self.config.response_length,
+        )
+        for key in self.config.keys():
+            if hasattr(SamplingParams(), key):
+               new_kwargs[key] = self.config.get(key)
+        for key, value in kwargs.items():
+            new_kwargs[key] = value
+        return SamplingParams(**new_kwargs)
 
     @GPUMemoryLogger(role="vllm rollout spmd", logger=logger)
     @torch.no_grad()
@@ -197,9 +214,7 @@ class vLLMRollout(BaseRollout):
 
         # used to construct attention_mask
         eos_token_id = prompts.meta_info["eos_token_id"]
-
         batch_size = idx.size(0)
-
         idx_list = []
         # parse idx from torch.Tensor to List[List[str]]
         for i in range(batch_size):
@@ -208,8 +223,6 @@ class vLLMRollout(BaseRollout):
         do_sample = prompts.meta_info.get("do_sample", True)
         is_validate = prompts.meta_info.get("validate", False)
 
-        #  RZ: If we are continue generating responses.
-        is_continue = prompts.meta_info.get("continue", False)
         if not do_sample:
             kwargs = {
                 "best_of": 1,
@@ -227,21 +240,19 @@ class vLLMRollout(BaseRollout):
                 "temperature": self.config.val_kwargs.temperature,
                 "n": 1,  # if validate, already repeat in ray_trainer
             }
-        # RZ: If we are continue generating responses.
-        elif is_continue:
-            assert 'n_continue' in self.config, "n_continue is not set in the config."
-            kwargs = {
-                "n": self.config.n_continue,
-            }
 
         # users can customize different sampling_params at different run
         with self.update_sampling_params(**kwargs):
+            import time
+            start_time = time.time()
             output = self.inference_engine.generate(
                 prompts=None,  # because we have already convert it to prompt token id
                 sampling_params=self.sampling_params,
                 prompt_token_ids=idx_list,
                 use_tqdm=False,
             )
+            end_time = time.time()
+            print(f"Time taken for vllm.generate: {end_time - start_time} seconds. Generate {output[0].shape[0]=} responses.")
 
             # TODO(sgm): disable logprob when recompute_log_prob is enable
             # if n = 1: (bs, response_length) ; if n > 1: (bs * n, response_length)
@@ -260,6 +271,7 @@ class vLLMRollout(BaseRollout):
                 batch_size = batch_size * self.sampling_params.n
             seq = torch.cat([idx, response], dim=-1)
 
+        # RZ: Spend some time to understand this part.
         response_length = response.size(1)
         delta_position_id = torch.arange(1, response_length + 1, device=position_ids.device)
         delta_position_id = delta_position_id.unsqueeze(0).repeat(batch_size, 1)
@@ -274,6 +286,7 @@ class vLLMRollout(BaseRollout):
             response_id=response, eos_token=eos_token_id, dtype=attention_mask.dtype
         )
         attention_mask = torch.cat((attention_mask, response_attention_mask), dim=-1)
+        ######### RZ: Spend some time to understand this part. #########
 
         # all the tp ranks should contain the same data here. data in all ranks are valid
         batch = TensorDict(

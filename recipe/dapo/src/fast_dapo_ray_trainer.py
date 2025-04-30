@@ -34,12 +34,37 @@ from verl.trainer.ppo.metric_utils import (
     reduce_metrics,
 )
 from verl.trainer.ppo.ray_trainer import AdvantageEstimator, RayPPOTrainer, _timer, apply_kl_penalty, compute_advantage
+from verl.trainer.ppo.data_controller import DataController
 
-
-class RayDAPOTrainer(RayPPOTrainer):
+class RayFastDAPOTrainer(RayPPOTrainer):
     """
     Note that this trainer runs on the driver process on a single CPU/GPU node.
+    This trainer runs Fast-DAPO algorithm.
     """
+
+    def __init__(self, 
+                 config, 
+                 tokenizer, 
+                 role_worker_mapping, 
+                 resource_pool_manager, 
+                 ray_worker_group_cls, 
+                 processor, 
+                 reward_fn, 
+                 val_reward_fn):
+        super().__init__(config, tokenizer, role_worker_mapping, resource_pool_manager, ray_worker_group_cls, processor, reward_fn, val_reward_fn)
+
+        # Define the data controller.
+        self.data_controller = DataController(
+            curriculum_enable=config.curriculum.enable,
+            gen_batch_size=config.data.gen_batch_size,
+            train_batch_size=config.data.train_batch_size,
+            initial_n=config.actor_rollout_ref.rollout.n,
+            n_continue=config.actor_rollout_ref.rollout.n_continue,
+            max_num_gen_batches=config.algorithm.filter_groups.max_num_gen_batches,
+            n_gpus=self.resource_pool_manager.get_n_gpus(),
+            max_prompt_length=self.config.data.max_prompt_length,
+            max_buffer_size=config.data.train_batch_size*(config.actor_rollout_ref.rollout.n + config.actor_rollout_ref.rollout.n_continue)*3
+        )
 
     def fit(self):
         """
@@ -76,7 +101,6 @@ class RayDAPOTrainer(RayPPOTrainer):
         # add tqdm
         progress_bar = tqdm(total=self.total_training_steps, initial=self.global_steps, desc="Training Progress")
 
-        # we start from step 1
         self.global_steps += 1
         last_val_metrics = None
 
@@ -88,17 +112,21 @@ class RayDAPOTrainer(RayPPOTrainer):
             for batch_dict in self.train_dataloader:
                 metrics = {}
 
-                new_batch: DataProto = DataProto.from_single_dict(batch_dict) # RZ: Generate a new batch.
+                new_batch: DataProto = DataProto.from_single_dict(batch_dict) 
+                new_batch.non_tensor_batch["uid"] = np.array(
+                        [str(uuid.uuid4()) for _ in range(len(new_batch.batch))], dtype=object
+                ) # label all prompts with a unique id. Only label new batches.
                 num_gen_batches += 1
-
                 assert "multi_modal_inputs" not in new_batch.non_tensor_batch.keys(), "Multi-modal inputs are not supported yet."
+
+                # RZ: We add new batch to the data controller and get a batch ready for generation from the data controller. The batch for generation may contain the old prompts in data controller that passes the filter.
+                self.data_controller.add_new_prompts_first_phase(new_batch)
+                new_batch = self.data_controller.get_generation_inputs()
                 gen_batch = new_batch.pop(
-                    batch_keys=["input_ids", "attention_mask", "position_ids"],
-                    non_tensor_batch_keys=["raw_prompt_ids"], # RZ: Why do we need this?
+                    batch_keys=["input_ids", "attention_mask", "position_ids"]
                 ) # DataProto.
 
                 is_last_step = self.global_steps >= self.total_training_steps
-
                 with _timer("step", timing_raw):
                     # generate a batch
                     gen_start_time = time.time()
@@ -110,22 +138,11 @@ class RayDAPOTrainer(RayPPOTrainer):
                     if self.config.algorithm.adv_estimator== AdvantageEstimator.REMAX:
                         raise NotImplementedError
 
-                    new_batch.non_tensor_batch["uid"] = np.array(
-                        [str(uuid.uuid4()) for _ in range(len(new_batch.batch))], dtype=object
-                    ) # DataProto with non_tenor_batch.keys() = dict_keys(['data_source', 'ability', 'reward_model', 'extra_info', 'index', 'uid'])
                     # repeat to align with repeated responses in rollout
                     new_batch = new_batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
                     new_batch = new_batch.union(gen_batch_output)
-                    # gen_batch_output; DataProto. gen_batch_output.batch.keys() = dict_keys(['attention_mask', 'input_ids', 'position_ids', 'prompts', 'responses']). 
-                    # gen_batch_output.non_tensor_batch is empty. gen_batch_output.meta_info is empty.
-                    # new_batch is a DataProto. new_batch.batch is empty.
-                    # new_batch.non_tensor_batch.keys() = dict_keys(['data_source', 'ability', 'reward_model', 'extra_info', 'index', 'uid']).
-                    # new_batch.meta_info is empty.
 
                     with _timer("reward", timing_raw):
-                        # compute scores. Support both model and function-based.
-                        # We first compute the scores using reward model. Then, we call reward_fn to combine
-                        # the results from reward model and rule-based results.
                         if self.use_rm:
                             # we first compute reward model score
                             reward_tensor = self.rm_wg.compute_rm_score(new_batch)
@@ -162,166 +179,23 @@ class RayDAPOTrainer(RayPPOTrainer):
                             new_batch.batch["token_level_rewards"] = new_batch.batch["token_level_scores"]
 
                     if not self.config.algorithm.filter_groups.enable:
-                        batch = new_batch
+                        raise NotImplementedError("Filtering is not supported in Fast-DAPO.")
                     else:  # NOTE: When prompts after filtering is less than train batch size,
                         # we skip to the next generation batch
                         metric_name = self.config.algorithm.filter_groups.metric
-                        if metric_name == "seq_final_reward":
-                            # Turn to numpy for easier filtering
-                            new_batch.non_tensor_batch["seq_final_reward"] = (
-                                new_batch.batch["token_level_rewards"].sum(dim=-1).numpy()
+                        if metric_name == "seq_final_reward" or metric_name == "seq_reward":
+                            raise NotImplementedError("Filtering metrics = seq_final_reward or seq_reward is not supported in Fast-DAPO.")
+                        
+                        # Update prompt statistics and get filtered prompts/trajectories
+                        self.data_controller.update_prompts(new_batch, metric_name)
+                        if self.data_controller.is_ready_for_training():
+                            print(f"We have enough prompts for training. We have {self.data_controller.get_num_prompts_for_training()=} prompts ready for training.")
+                            batch = self.data_controller.get_training_data(
+                                prompt_batch_size = self.config.data.train_batch_size
                             )
-                        elif metric_name == "seq_reward":
-                            new_batch.non_tensor_batch["seq_reward"] = (
-                                new_batch.batch["token_level_scores"].sum(dim=-1).numpy()
-                            )
-
-                        # Collect the sequence reward for each trajectory
-                        prompt_uid2metric_vals = defaultdict(list) # RZ: A dictionary that maps prompt_uid to a list of metric values.
-                        for uid, metric_val in zip(
-                            new_batch.non_tensor_batch["uid"], new_batch.non_tensor_batch[metric_name]
-                        ):
-                            prompt_uid2metric_vals[uid].append(metric_val)
-
-                        prompt_uid2metric_std = {}
-                        for prompt_uid, metric_vals in prompt_uid2metric_vals.items():
-                            prompt_uid2metric_std[prompt_uid] = np.std(metric_vals)
-
-                        kept_prompt_uids = [
-                            uid
-                            for uid, std in prompt_uid2metric_std.items()
-                            if std > 0 or len(prompt_uid2metric_vals[uid]) == 1
-                        ]
-                        num_prompt_in_batch += len(kept_prompt_uids)
-
-                        kept_traj_idxs = [] # RZ: All indices of the trajectories that are kept.
-                        for idx, traj_from_prompt_uid in enumerate(new_batch.non_tensor_batch["uid"]):
-                            if traj_from_prompt_uid in kept_prompt_uids:
-                                kept_traj_idxs.append(idx)
-
-                        new_batch = new_batch[kept_traj_idxs] # RZ: Select the trajectories with qualified prompts.
-                        batch = new_batch if batch is None else DataProto.concat([batch, new_batch]) # RZ: Concatenate the new batch with the old batch. The 'batch' keeps all data that the model is trained on.
-
-                        prompt_bsz = self.config.data.train_batch_size
-
-                        if num_prompt_in_batch < prompt_bsz:
-                            print(f"{num_prompt_in_batch=} < {prompt_bsz=}")
-                            max_num_gen_batches = self.config.algorithm.filter_groups.max_num_gen_batches
-                            if max_num_gen_batches <= 0 or num_gen_batches < max_num_gen_batches:
-                                print(f"{num_gen_batches=}. Keep generating...")
-                                continue
-                            else:
-                                raise ValueError(
-                                    f"{num_gen_batches=} >= {max_num_gen_batches=}."
-                                    + " Generated too many. Please check if your data are too difficult."
-                                    + " You could also try set max_num_gen_batches=0 to enable endless trials."
-                                )
                         else:
-                            # Align the batch
-                            print(f"{num_gen_batches=}. We have enought prompts for training. We have {num_prompt_in_batch=} prompts in the batch.")
-                            traj_bsz = self.config.data.train_batch_size * self.config.actor_rollout_ref.rollout.n
-                            batch = batch[:traj_bsz]
-                            print(f'Size = {batch.batch["input_ids"].shape=}')
-                            print(f'non_tensor_batch = {batch.non_tensor_batch.keys()=}')
-                            print(f'meta_info = {batch.meta_info.keys()=}')
-                            print(f'uids = {batch.non_tensor_batch["uid"]}')
-
-                    # Curriculum learning implementation
-                    if self.config.curriculum.enable:
-                        # Get the trajectory batch size and original rollout size
-                        traj_bsz = len(batch)
-                        n = self.config.actor_rollout_ref.rollout.n
-                        n_continue = self.config.actor_rollout_ref.rollout.n_continue
-
-                        # Extract only the prompt part of each trajectory, but maintain the original UIDs
-                        prompt_ids = list(range(0, traj_bsz, n))
-                        prompt_batch = batch.select_idxs(prompt_ids).truncate(start=0, end=self.config.data.max_prompt_length)
-                        
-                        # Keep only the input_ids, attention_mask, position_ids and uid for generation
-                        gen_batch = prompt_batch.select(
-                            batch_keys=["input_ids", "attention_mask", "position_ids"],
-                            non_tensor_batch_keys=["uid"],
-                        )
-                        
-                        # Generate additional n_continue responses for each qualified prompt
-                        gen_continue_start_time = time.time()
-                        with _timer("gen-continue", timing_raw):
-                            gen_batch.meta_info["continue"] = True  # Set continue flag in meta_info
-                            gen_batch_continue_output = self.actor_rollout_wg.generate_sequences(gen_batch)
-                        gen_continue_end_time = time.time()
-                        print(f"Time taken for generation of continue: gen_continue_{gen_continue_end_time - gen_continue_start_time} seconds")
-                        
-                        # Create a new batch with the original prompts and the newly generated responses
-                        # First, make copies of the prompts for each new generation
-                        continue_batch = prompt_batch.repeat(repeat_times=n_continue, interleave=True).select(
-                            batch_keys=[],
-                            non_tensor_batch_keys=['data_source', 'ability', 'reward_model', 'extra_info', 'index', 'uid'],
-                            meta_info_keys=[],
-                        )  # RZ: Make proper keys before trying .union()
-                        continue_batch = continue_batch.union(gen_batch_continue_output)
-                        
-                        # Compute reward scores for the new generations
-                        with _timer("reward-continue", timing_raw):
-                            if self.use_rm:
-                                # Compute reward model scores
-                                reward_tensor = self.rm_wg.compute_rm_score(continue_batch)
-                                continue_batch = continue_batch.union(reward_tensor)
-                            
-                            # Combine with rule-based reward
-                            try:
-                                reward_result = self.reward_fn(continue_batch, return_dict=True)
-                                reward_tensor = reward_result["reward_tensor"]
-                                reward_extra_infos_dict = reward_result["reward_extra_info"]
-                            except Exception as e:
-                                print(f"Error in reward_fn for curriculum: {e}")
-                                reward_tensor = self.reward_fn(continue_batch)
-                                reward_extra_infos_dict = {}
-                            
-                            continue_batch.batch["token_level_scores"] = reward_tensor
-                            
-                            if reward_extra_infos_dict:
-                                continue_batch.non_tensor_batch.update(
-                                    {k: np.array(v) for k, v in reward_extra_infos_dict.items()}
-                                )
-                            
-                            # Apply KL penalty if needed
-                            if self.config.algorithm.use_kl_in_reward:
-                                continue_batch, kl_continue_metrics = apply_kl_penalty(
-                                    continue_batch, kl_ctrl=self.kl_ctrl_in_reward, kl_penalty=self.config.algorithm.kl_penalty
-                                )
-                                metrics.update({f"curriculum_{k}": v for k, v in kl_continue_metrics.items()})
-                            else:
-                                continue_batch.batch["token_level_rewards"] = continue_batch.batch["token_level_scores"]
-                        
-                        # Combine the original batch with the new generations
-                        combined_batch = DataProto.concat([batch, continue_batch])
-
-                        # Reorder the batch so that responses for the same prompt are together
-                        # After interleaving, for each prompt:
-                        # - The first n responses will be from the original batch
-                        # - The next n_continue responses will be from the continue_batch
-                        # This ensures a structure where (n + n_continue) responses for each prompt
-                        # are in contiguous locations in the tensor
-                        combined_batch = combined_batch.interleave_by_uid()
-                        
-                        # Verify the correct interleaving (optional debug code)
-                        if self.config.curriculum.get("debug_interleaving", False):
-                            print("Verifying interleaved batch structure...")
-                            uid_to_counts = defaultdict(int)
-                            for idx, uid in enumerate(combined_batch.non_tensor_batch["uid"]):
-                                uid_to_counts[uid] += 1
-                                # Check if we've seen all responses for this prompt
-                                if uid_to_counts[uid] == n + n_continue:
-                                    # Verify that the responses are contiguous
-                                    start_idx = idx - (n + n_continue) + 1
-                                    expected_uids = [uid] * (n + n_continue)
-                                    actual_uids = combined_batch.non_tensor_batch["uid"][start_idx:idx+1]
-                                    assert all(a == e for a, e in zip(actual_uids, expected_uids)), \
-                                        f"Non-contiguous responses for prompt {uid}"
-                            print(f"Interleaving verified: All {len(uid_to_counts)} prompts have contiguous responses")
-                        
-                        # Update the batch for training
-                        batch = combined_batch
+                            print(f"We have {self.data_controller.get_num_prompts_for_training()=} prompts ready for training.")
+                            continue
 
                     # balance the number of valid tokens on each dp rank.
                     # Note that this breaks the order of data inside the batch.
