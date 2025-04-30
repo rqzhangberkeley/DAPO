@@ -207,7 +207,6 @@ class DataController:
         training_indices = training_indices[:train_resp_bsz]
         training_data = self.prompts_for_training[training_indices]
         self.num_prompts_for_training -= self.train_batch_size
-        self.num_gen_batches = 0
         remaining_indices = [i for i in range(self.prompts_for_training.batch.batch_size[0]) if i not in training_indices]
         self.prompts_for_training = self.prompts_for_training[remaining_indices]
 
@@ -220,3 +219,6 @@ class DataController:
         assert len(training_uids_to_indices) == prompt_batch_size, f"The number of training uids should be equal to the prompt batch size. Got {len(training_uids_to_indices)=} and {prompt_batch_size=}"
 
         return training_data
+
+    def reset_num_gen_batches(self):
+        self.num_gen_batches = 0

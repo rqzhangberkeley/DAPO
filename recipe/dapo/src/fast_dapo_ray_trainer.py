@@ -86,6 +86,14 @@ class RayFastDAPOTrainer(RayPPOTrainer):
 
         self.global_steps = 0
 
+        # The corner cases have not been implemented for fast DAPO.
+        if self.config.algorithm.adv_estimator== AdvantageEstimator.REMAX:
+            raise NotImplementedError
+        if not self.config.algorithm.filter_groups.enable:
+            raise NotImplementedError(f"The self.config.algorith.filter_groups.enable must be True in fast-DAPO.")
+        if self.config.algorithm.filter_groups.metric == "seq_final_reward" or self.config.algorithm.filter_groups.metric == "seq_reward":
+            raise NotImplementedError("Filtering metrics = seq_final_reward or seq_reward is not supported in Fast-DAPO.")
+
         # load checkpoint before doing anything
         self._load_checkpoint()
 
@@ -110,196 +118,185 @@ class RayFastDAPOTrainer(RayPPOTrainer):
         num_gen_batches = 0
         for epoch in range(self.config.trainer.total_epochs):
             for batch_dict in self.train_dataloader:
-                metrics = {}
-
-                new_batch: DataProto = DataProto.from_single_dict(batch_dict) 
-                new_batch.non_tensor_batch["uid"] = np.array(
-                        [str(uuid.uuid4()) for _ in range(len(new_batch.batch))], dtype=object
-                ) # label all prompts with a unique id. Only label new batches.
-                num_gen_batches += 1
-                assert "multi_modal_inputs" not in new_batch.non_tensor_batch.keys(), "Multi-modal inputs are not supported yet."
-
-                # RZ: We add new batch to the data controller and get a batch ready for generation from the data controller. The batch for generation may contain the old prompts in data controller that passes the filter.
-                self.data_controller.add_new_prompts_first_phase(new_batch)
-                new_batch = self.data_controller.get_generation_inputs()
-                gen_batch = new_batch.pop(
-                    batch_keys=["input_ids", "attention_mask", "position_ids"]
-                ) # DataProto.
-
                 is_last_step = self.global_steps >= self.total_training_steps
-                with _timer("step", timing_raw):
-                    # generate a batch
-                    gen_start_time = time.time()
-                    with _timer("gen", timing_raw):
-                        gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch) # DataProto with only batch, and the non_tensor_batch an meta_info are enpty.
-                    gen_end_time = time.time()
-                    print(f"Time taken for generation: {gen_end_time - gen_start_time} seconds")
 
-                    if self.config.algorithm.adv_estimator== AdvantageEstimator.REMAX:
-                        raise NotImplementedError
+                if not self.data_controller.is_ready_for_training(): # not ready for training. Do Inference.
+                    print(f"We have enough prompts for training. We have {self.data_controller.get_num_prompts_for_training()=} prompts ready for training.")
 
-                    # repeat to align with repeated responses in rollout
-                    new_batch = new_batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
-                    new_batch = new_batch.union(gen_batch_output)
+                    metrics = {}
 
-                    with _timer("reward", timing_raw):
-                        if self.use_rm:
-                            # we first compute reward model score
-                            reward_tensor = self.rm_wg.compute_rm_score(new_batch)
-                            new_batch = new_batch.union(reward_tensor)
+                    # get a new batch for inference
+                    new_batch: DataProto = DataProto.from_single_dict(batch_dict) 
+                    new_batch.non_tensor_batch["uid"] = np.array(
+                            [str(uuid.uuid4()) for _ in range(len(new_batch.batch))], dtype=object
+                    ) # label all prompts with a unique id. Only label new batches.
+                    num_gen_batches += 1
+                    assert "multi_modal_inputs" not in new_batch.non_tensor_batch.keys(), "Multi-modal inputs are not supported yet."
 
-                        # we combine with rule-based rm
-                        reward_extra_infos_dict: dict[str, list]
-                        try:
-                            reward_result = self.reward_fn(new_batch, return_dict=True)
-                            reward_tensor = reward_result["reward_tensor"]
-                            reward_extra_infos_dict = reward_result["reward_extra_info"]
-                        except Exception as e:
-                            print(f"Error in reward_fn: {e}")
-                            reward_tensor = self.reward_fn(new_batch)
-                            reward_extra_infos_dict = {}
+                    # RZ: We add new batch to the data controller and get a batch ready for generation from the data controller. The batch for generation may contain the old prompts in data controller that passes the filter.
+                    self.data_controller.add_new_prompts_first_phase(new_batch)
+                    new_batch = self.data_controller.get_generation_inputs()
+                    gen_batch = new_batch.pop(
+                        batch_keys=["input_ids", "attention_mask", "position_ids"]
+                    ) # DataProto.
 
-                        new_batch.batch["token_level_scores"] = reward_tensor
+                    with _timer("step", timing_raw):
+                        # generate a batch
+                        gen_start_time = time.time()
+                        with _timer("gen", timing_raw):
+                            gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch) # DataProto with only batch, and the non_tensor_batch an meta_info are enpty.
+                        gen_end_time = time.time()
+                        print(f"Time taken for generation: {gen_end_time - gen_start_time} seconds")
 
-                        print(f"{list(reward_extra_infos_dict.keys())=}")
-                        if reward_extra_infos_dict:
-                            new_batch.non_tensor_batch.update(
-                                {k: np.array(v) for k, v in reward_extra_infos_dict.items()}
-                            )
+                        new_batch = new_batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True) # repeat to align with repeated responses in rollout
+                        new_batch = new_batch.union(gen_batch_output)
 
-                        # compute rewards. apply_kl_penalty if available
-                        if self.config.algorithm.use_kl_in_reward: # RZ: By default this is False
-                            new_batch, kl_metrics = apply_kl_penalty(
-                                new_batch, kl_ctrl=self.kl_ctrl_in_reward, kl_penalty=self.config.algorithm.kl_penalty
-                            )
-                            metrics.update(
-                                kl_metrics
-                            )  # TODO: This will be cleared if we use multiple genenration batches
-                        else:
-                            new_batch.batch["token_level_rewards"] = new_batch.batch["token_level_scores"]
+                        with _timer("reward", timing_raw):
+                            if self.use_rm:
+                                # we first compute reward model score
+                                reward_tensor = self.rm_wg.compute_rm_score(new_batch)
+                                new_batch = new_batch.union(reward_tensor)
 
-                    if not self.config.algorithm.filter_groups.enable:
-                        raise NotImplementedError("Filtering is not supported in Fast-DAPO.")
-                    else:  # NOTE: When prompts after filtering is less than train batch size,
-                        # we skip to the next generation batch
-                        metric_name = self.config.algorithm.filter_groups.metric
-                        if metric_name == "seq_final_reward" or metric_name == "seq_reward":
-                            raise NotImplementedError("Filtering metrics = seq_final_reward or seq_reward is not supported in Fast-DAPO.")
+                            # we combine with rule-based rm
+                            reward_extra_infos_dict: dict[str, list]
+                            try:
+                                reward_result = self.reward_fn(new_batch, return_dict=True)
+                                reward_tensor = reward_result["reward_tensor"]
+                                reward_extra_infos_dict = reward_result["reward_extra_info"]
+                            except Exception as e:
+                                print(f"Error in reward_fn: {e}")
+                                reward_tensor = self.reward_fn(new_batch)
+                                reward_extra_infos_dict = {}
+
+                            new_batch.batch["token_level_scores"] = reward_tensor
+
+                            print(f"{list(reward_extra_infos_dict.keys())=}")
+                            if reward_extra_infos_dict:
+                                new_batch.non_tensor_batch.update(
+                                    {k: np.array(v) for k, v in reward_extra_infos_dict.items()}
+                                )
+
+                            # compute rewards. apply_kl_penalty if available
+                            if self.config.algorithm.use_kl_in_reward: # RZ: By default this is False
+                                new_batch, kl_metrics = apply_kl_penalty(
+                                    new_batch, kl_ctrl=self.kl_ctrl_in_reward, kl_penalty=self.config.algorithm.kl_penalty
+                                )
+                                metrics.update(
+                                    kl_metrics
+                                )  # TODO: This will be cleared if we use multiple genenration batches
+                            else:
+                                new_batch.batch["token_level_rewards"] = new_batch.batch["token_level_scores"]
                         
                         # Update prompt statistics and get filtered prompts/trajectories
-                        self.data_controller.update_prompts(new_batch, metric_name)
-                        if self.data_controller.is_ready_for_training():
-                            print(f"We have enough prompts for training. We have {self.data_controller.get_num_prompts_for_training()=} prompts ready for training.")
-                            batch = self.data_controller.get_training_data(
-                                prompt_batch_size = self.config.data.train_batch_size
+                        self.data_controller.update_prompts(new_batch, self.config.algorithm.filter_groups.metric)
+                        continue
+                            
+                elif self.data_controller.is_ready_for_training(): # start training when we have enough qualified prompts.
+                    print(f"We have {self.data_controller.get_num_prompts_for_training()=} prompts ready for training.")
+                    if not metrics:
+                        metrics = {} # if we start the training without doing any additional inferences (there coould be enough qualified prompts in the buffer), we need to initialize the metrics.
+                    batch = self.data_controller.get_training_data(prompt_batch_size = self.config.data.train_batch_size) # get a batch of training data.
+
+                    with _timer("step", timing_raw):
+                        # balance the number of valid tokens on each dp rank.
+                        # Note that this breaks the order of data inside the batch.
+                        # Please take care when you implement group based adv computation such as GRPO and rloo
+                        if self.config.trainer.balance_batch:
+                            self._balance_batch(batch, metrics=metrics)
+
+                        # compute global_valid tokens
+                        batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
+
+                        # recompute old_log_probs
+                        old_log_prob_start_time = time.time()
+                        with _timer("old_log_prob", timing_raw):
+                            old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+                            batch = batch.union(old_log_prob)
+                        old_log_prob_end_time = time.time()
+                        print(f"Time taken for old_log_prob: old_log_prob_{old_log_prob_end_time - old_log_prob_start_time} seconds")
+
+                        ref_start_time = time.time()
+                        if self.use_reference_policy:
+                            # compute reference log_prob
+                            with _timer("ref", timing_raw):
+                                ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
+                                batch = batch.union(ref_log_prob)
+                        ref_end_time = time.time()
+                        print(f"Time taken for ref: ref_{ref_end_time - ref_start_time} seconds")
+
+                        # compute values
+                        if self.use_critic:
+                            with _timer("values", timing_raw):
+                                values = self.critic_wg.compute_values(batch)
+                                batch = batch.union(values)
+
+                        adv_start_time = time.time()
+                        with _timer("adv", timing_raw):
+                            # compute advantages, executed on the driver process
+                            norm_adv_by_std_in_grpo = self.config.algorithm.get("norm_adv_by_std_in_grpo", True)
+                            batch = compute_advantage(
+                                batch,
+                                adv_estimator=self.config.algorithm.adv_estimator,
+                                gamma=self.config.algorithm.gamma,
+                                lam=self.config.algorithm.lam,
+                                num_repeat=self.config.actor_rollout_ref.rollout.n,
+                                norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
                             )
-                        else:
-                            print(f"We have {self.data_controller.get_num_prompts_for_training()=} prompts ready for training.")
-                            continue
+                        adv_end_time = time.time()
+                        print(f"Time taken for adv: adv_{adv_end_time - adv_start_time} seconds")
 
-                    # balance the number of valid tokens on each dp rank.
-                    # Note that this breaks the order of data inside the batch.
-                    # Please take care when you implement group based adv computation such as GRPO and rloo
-                    if self.config.trainer.balance_batch:
-                        self._balance_batch(batch, metrics=metrics)
+                        # update critic
+                        if self.use_critic:
+                            with _timer("update_critic", timing_raw):
+                                critic_output = self.critic_wg.update_critic(batch)
+                            critic_output_metrics = reduce_metrics(critic_output.meta_info["metrics"])
+                            metrics.update(critic_output_metrics)
 
-                    # compute global_valid tokens
-                    batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
+                        # implement critic warmup
+                        update_actor_start_time = time.time()
+                        if self.config.trainer.critic_warmup <= self.global_steps:
+                            # update actor
+                            with _timer("update_actor", timing_raw):
+                                actor_output = self.actor_rollout_wg.update_actor(batch)
+                            actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
+                            metrics.update(actor_output_metrics)
+                        update_actor_end_time = time.time()
+                        print(f"Time taken for update_actor: update_actor_{update_actor_end_time - update_actor_start_time} seconds")
 
-                    # recompute old_log_probs
-                    old_log_prob_start_time = time.time()
-                    with _timer("old_log_prob", timing_raw):
-                        old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
-                        batch = batch.union(old_log_prob)
-                    old_log_prob_end_time = time.time()
-                    print(f"Time taken for old_log_prob: old_log_prob_{old_log_prob_end_time - old_log_prob_start_time} seconds")
+                        # validate
+                        if (
+                            self.val_reward_fn is not None
+                            and self.config.trainer.test_freq > 0
+                            and (is_last_step or self.global_steps % self.config.trainer.test_freq == 0)
+                        ):
+                            with _timer("testing", timing_raw):
+                                val_metrics: dict = self._validate()
+                                if is_last_step:
+                                    last_val_metrics = val_metrics
+                            metrics.update(val_metrics)
 
-                    ref_start_time = time.time()
-                    if self.use_reference_policy:
-                        # compute reference log_prob
-                        with _timer("ref", timing_raw):
-                            ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
-                            batch = batch.union(ref_log_prob)
-                    ref_end_time = time.time()
-                    print(f"Time taken for ref: ref_{ref_end_time - ref_start_time} seconds")
+                        if self.config.trainer.save_freq > 0 and (
+                            is_last_step or self.global_steps % self.config.trainer.save_freq == 0
+                        ):
+                            with _timer("save_checkpoint", timing_raw):
+                                self._save_checkpoint()
 
-                    # compute values
-                    if self.use_critic:
-                        with _timer("values", timing_raw):
-                            values = self.critic_wg.compute_values(batch)
-                            batch = batch.union(values)
+                    # collect metrics
+                    metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
+                    metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
+                    # TODO: implement actual tflpo and theoretical tflpo
+                    n_gpus = self.resource_pool_manager.get_n_gpus()
+                    metrics.update(compute_throughout_metrics(batch=batch, timing_raw=timing_raw, n_gpus=n_gpus))
+                    timing_raw = defaultdict(float)  # clear timing
 
-                    adv_start_time = time.time()
-                    with _timer("adv", timing_raw):
-                        # compute advantages, executed on the driver process
-                        norm_adv_by_std_in_grpo = self.config.algorithm.get("norm_adv_by_std_in_grpo", True)
-                        batch = compute_advantage(
-                            batch,
-                            adv_estimator=self.config.algorithm.adv_estimator,
-                            gamma=self.config.algorithm.gamma,
-                            lam=self.config.algorithm.lam,
-                            num_repeat=self.config.actor_rollout_ref.rollout.n,
-                            norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
-                        )
-                    adv_end_time = time.time()
-                    print(f"Time taken for adv: adv_{adv_end_time - adv_start_time} seconds")
+                    metrics["train/num_gen_batches"] = self.data_controller.get_num_gen_batches()
+                    self.data_controller.reset_num_gen_batches()
+                    logger.log(data=metrics, step=self.global_steps)
 
-                    # update critic
-                    if self.use_critic:
-                        with _timer("update_critic", timing_raw):
-                            critic_output = self.critic_wg.update_critic(batch)
-                        critic_output_metrics = reduce_metrics(critic_output.meta_info["metrics"])
-                        metrics.update(critic_output_metrics)
+                    if is_last_step:
+                        pprint(f"Final validation metrics: {last_val_metrics}")
+                        progress_bar.close()
+                        return
 
-                    # implement critic warmup
-                    update_actor_start_time = time.time()
-                    if self.config.trainer.critic_warmup <= self.global_steps:
-                        # update actor
-                        with _timer("update_actor", timing_raw):
-                            actor_output = self.actor_rollout_wg.update_actor(batch)
-                        actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
-                        metrics.update(actor_output_metrics)
-                    update_actor_end_time = time.time()
-                    print(f"Time taken for update_actor: update_actor_{update_actor_end_time - update_actor_start_time} seconds")
-
-                    # validate
-                    if (
-                        self.val_reward_fn is not None
-                        and self.config.trainer.test_freq > 0
-                        and (is_last_step or self.global_steps % self.config.trainer.test_freq == 0)
-                    ):
-                        with _timer("testing", timing_raw):
-                            val_metrics: dict = self._validate()
-                            if is_last_step:
-                                last_val_metrics = val_metrics
-                        metrics.update(val_metrics)
-
-                    if self.config.trainer.save_freq > 0 and (
-                        is_last_step or self.global_steps % self.config.trainer.save_freq == 0
-                    ):
-                        with _timer("save_checkpoint", timing_raw):
-                            self._save_checkpoint()
-
-                # collect metrics
-                metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
-                metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
-                # TODO: implement actual tflpo and theoretical tflpo
-                n_gpus = self.resource_pool_manager.get_n_gpus()
-                metrics.update(compute_throughout_metrics(batch=batch, timing_raw=timing_raw, n_gpus=n_gpus))
-                timing_raw = defaultdict(float)  # clear timing
-
-                metrics["train/num_gen_batches"] = num_gen_batches
-                batch = None
-                num_prompt_in_batch = 0
-                num_gen_batches = 0
-
-                # TODO: make a canonical logger that supports various backend
-                logger.log(data=metrics, step=self.global_steps)
-
-                if is_last_step:
-                    pprint(f"Final validation metrics: {last_val_metrics}")
-                    progress_bar.close()
-                    return
-
-                progress_bar.update(1)
-                self.global_steps += 1
+                    progress_bar.update(1)
+                    self.global_steps += 1 # Here, 'step' means actual RL step (so the number of training steps within one step is fixed).

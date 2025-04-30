@@ -46,3 +46,53 @@ max_num_gen_batches: the maximum number of generation batches we try to generate
 - Since we do not use the DAPO's prompt, we need to change the reward function. This can be doneby editing the function in `verl/utils/reward_score/__init__.py`. We use the `math_verify.compute_score()` function to compute the score.
 - Modify the `./recipe/dapo/dapo_ray_trainer.fit()` function. Pay attention to the `ProtoData.union()` function because it is used to merge the prompts and the responses. To write the main algorithm, you also need to add `DataProto.truncate()` and `DataProto.interleave_by_uid()` functions in `verl/protocol.py`. The interleave function is to make the response in both stages (for the same prompt) are in the contiguous space in the batch so that we can easily compute the advantage and do the RL training.
 - If you are using an old version of tensordict (say, 0.1.2), you should remove the multi-modal part in the `verl/workers/actor/dp_actor.py` file.
+- We implement the `recipe/dapo/src/main_fast_dapo.py` and `recipe/dapo/src/fast_dapo_ray_trainer.py` to implement the fast DAPO algorithm.
+- We implement the `verl/trainer/ppo/data_controller.py` to control the data for the PPO training. In `DataController`, we maintain several `DataProto` instances to store the prompts and responses for the first generation stage, the second generation stage, and the data ready for trainingrespectively.
+  * `DataController.prompts_for_first_generation_phase`: the prompts for the first generation stage. When we call `add_new_prompts_first_phase()`, we add the new prompts to this instance.
+  * `DataController.prompts_for_second_generation_phase`: the prompts for the second generation stage. 
+  * `DataController.prompts_for_training`: the prompts for the training stage. `DataController.num_prompts_for_training` is the number of prompts in this instance. The function `is_ready_for_training()` is used to check whether we have enough prompts for training. This function returns True if the number of prompts in `DataController.prompts_for_training` is no less than `self.train_batch_size` (the `config.data.train_batch_size` in fast_dapo_ray_trainer.py).
+  * After calling `self.actor_wg.generate_sequences()`, we call `DataController.update_prompts()` to sync the newly generated responses. Data flow: in the generation, there are two types of prompts: one with `self.config.actor_rollout_ref.rollout.n` responses and the other with `self.config.actor_rollout_ref.rollout.n_continue` responses. For the prompts that finished the first generation phase, we add the responses (together with the prompts and rewards) to `DataController.prompts_for_training`. We then add the qualified prompts to `DataController.prompts_for_second_generation_phase`. For the prompts that finished the second generation phase, we add the prompts and responses to `DataController.prompts_for_training`.
+  * When it is ready for training, we call `DataController.get_training_data()` to get the data for training. This returns `self.config.data.train_batch_size` prompts with `self.config.actor_rollout_ref.rollout.n + self.config.actor_rollout_ref.rollout.n_continue` responses each.
+- The entire loop for `RayFastDAPOTrainer.fit()` is as follows:
+```
+initialize the self.datacontroller
+global_steps = 0
+
+for every step:
+    if not is_ready_for_training:
+
+        batch = get a new batch from the training dataloader (ready for the first generation phase).
+
+        self.datacontroller.add_new_prompts_first_generation_phase(batch).
+        # Update the data controller: 
+
+        batch = self.datacontroller.get_generation_inputs().
+        # Get a new batch from the data controller. This includes the prompts for the first and second generation phase.
+
+        gen_batch = construct the generation batch from batch
+
+        gen_batch_output = self.actor_wg.generate_sequences(gen_batch)
+        # Generate outputs
+
+        # Call the reward function and compute the pass rates for the prompts in the gen_batch_output.
+
+        self.datacontroller.update_prompts() # Update the data controller.
+
+        continue
+
+    elif is_ready_for_training:
+        batch = self.datacontroller.get_training_data() # Get a batch of training data.
+
+        # Compute the reference policy for the batch.
+
+        # Compute the advantage and the loss.
+
+        # Update the actors (and critics if necessary).
+
+        # Log the metrics.
+
+        # Update the data controller.
+
+        global_steps += 1
+        # The global steps is the actual number of RL steps.
+```
