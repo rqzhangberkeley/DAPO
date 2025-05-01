@@ -12,7 +12,7 @@ export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 # RZ: Override the max_position_embedding
 wandb login 363018e9dc8339fae726d3b48a839f262c457194
 
 project_name='DAPO'
-exp_name='test-1.5B-time-noCL-DAPO-DAPO'
+exp_name='test-1.5B-vanilla-DAPO'
 
 adv_estimator=rloo
 use_kl_in_reward=False
@@ -34,15 +34,15 @@ loss_agg_mode="token-mean"
 enable_filter_groups=True # Whether we filter the prompts base on the pass rates.
 filter_groups_metric=acc # The metric to filter the prompts.
 max_num_gen_batches=50 # The maximum number of generations to generate. If we exceed this number, we will stop generating and raise error.
-train_prompt_bsz=4
-gen_prompt_bsz=16
-train_prompt_mini_bsz=4
-n_resp_per_prompt=4
-n_resp_continue=12
+train_prompt_bsz=64
+gen_prompt_bsz=320
+train_prompt_mini_bsz=32
+n_resp_per_prompt=20
+n_resp_continue=0
 n_resp_per_prompt_val=4
 total_epochs=10
-enable_curriculum=True
-val_before_train=False
+enable_curriculum=False
+val_before_train=True
 save_freq=-1
 max_ckpt_to_keep=2
 
@@ -59,7 +59,6 @@ val_only=False
 
 CKPT_PATH=${CKPT_PATH:-"/work/nvme/bdwy/rzhang15/ckpts/DAPO"}
 TRAIN_FILE=${TRAIN_FILE:-"./data/DAPO-unique-Qwen-base/train.parquet"}
-TEST_FILE=${TEST_FILE:-"./data/DAPO-unique-Qwen-base/test.parquet"}
 
 # Algorithm
 temperature=1.0
@@ -77,7 +76,7 @@ offload=False
 #     -- 
 PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_dapo \
     data.train_files="${TRAIN_FILE}" \
-    data.val_files="${TEST_FILE}" \
+    data.val_files=[\"./data/DAPO-unique-Qwen-base/test.parquet\",\"./data/math500-Qwen-base/test.parquet\",\"./data/AIME-Qwen-base/train.parquet\"] \
     data.prompt_key=prompt \
     data.truncation='left' \
     data.max_prompt_length=${max_prompt_length} \
@@ -143,7 +142,7 @@ PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_dapo \
     reward_model.overlong_buffer.enable=${enable_overlong_buffer} \
     reward_model.overlong_buffer.len=${overlong_buffer_len} \
     reward_model.overlong_buffer.penalty_factor=${overlong_penalty_factor} \
-    trainer.logger=['console'] \
+    trainer.logger=['console','wandb'] \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
@@ -156,7 +155,10 @@ PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_dapo \
     +trainer.val_only=${val_only} \
     trainer.max_actor_ckpt_to_keep=${max_ckpt_to_keep} \
     trainer.max_critic_ckpt_to_keep=${max_ckpt_to_keep} \
-    curriculum.enable=${enable_curriculum} | tee ./logs/${exp_name}_$(id -u).log
+    trainer.save_metrics_local_dir=${WORKING_DIR}/metrics \
+    trainer.save_metric_path=${exp_name}_$(date +%Y%m%d_%H%M%S) \
+    trainer.default_local_dir=${WORKING_DIR}/checkpoints/${project_name}/${exp_name} \
+    curriculum.enable=${enable_curriculum} | tee ./logs/${exp_name}_$(date +%Y%m%d_%H%M%S).log
 
 # run
 # ./recipe/dapo/test_dapo_1.5b.sh

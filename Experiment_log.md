@@ -98,3 +98,4 @@ for every step:
 
         continue
 ```
+- We save the metrics to a json file as a stream. This is done by `json.dumps()` and `jf.write()`. We log the total training time and the global steps.

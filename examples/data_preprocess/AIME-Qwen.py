@@ -16,12 +16,10 @@ Preprocess the DAPO-17k dataset to parquet format
 """
 
 import os
-import datasets
-import random
-
-from verl.utils.hdfs_io import copy, makedirs
 import argparse
-
+import pandas as pd
+import datasets
+from verl.utils.hdfs_io import copy, makedirs
 from verl.utils.reward_score.math import remove_boxed, last_boxed_only_string
 
 
@@ -34,22 +32,23 @@ if __name__ == '__main__':
     parser.add_argument('--local_dir', default='./data/AIME-Qwen-base')
     parser.add_argument('--model_type', default='base')
     parser.add_argument('--hdfs_dir', default=None)
-
     args = parser.parse_args()
 
     data_source = 'BytedTsinghua-SIA/AIME-2024'
-    print(f"Loading the {data_source} dataset from huggingface...", flush=True)
-    dataset = datasets.load_dataset(data_source, trust_remote_code=True)
-    instruction_following = "Let's think step by step and output the final answer within \\boxed{}." 
+    print(f"Loading the {data_source} dataset from HuggingFace...", flush=True)
+    ds = datasets.load_dataset(data_source, trust_remote_code=True)
 
-    train_dataset = dataset['train']
+    instruction_following = "Let's think step by step and output the final answer within \\boxed{}."
 
-    # add a row to each data item that represents a unique id
+    # 1) Take the train split and drop the unwanted auto‐index column
+    train_orig = ds['train'].remove_columns("__index_level_0__")
+    # Keep track of all columns so we can remove them in map()
+    old_cols = train_orig.column_names
+
+    # 2) Build a transformer that only returns the fields you want,
+    #    including a new one‐field extra_info struct.
     def make_map_fn(split):
-
         def process_fn(example, idx):
-            
-            data_source = example.pop('data_source')
             prompt = example.pop('prompt') # There are instructions in the prompt.
             question_raw = prompt[0]['content']
             question_raw = question_raw.replace('Solve the following math problem step by step. The last line of your response should be of the form Answer: $Answer (without quotes) where $Answer is the answer to the problem.\n\n', '')
@@ -65,28 +64,45 @@ if __name__ == '__main__':
             else:
                 raise ValueError(f"Invalid model type: {args.model_type}")
 
-            ability = example.pop('ability')
-            reward_model = example.pop('reward_model')
-            extra_info = example.pop('extra_info')
-            data = {
-                "data_source": data_source+'-Qwen-base',
-                "prompt": prompt, # the system prompt is different from the one in MATH dataset.
-                "ability": ability,
-                "reward_model": reward_model,
-                "extra_info": extra_info
+            return {
+                "data_source":  "AIME-Qwen-base",
+                "prompt":       prompt,
+                "ability":      example["ability"],
+                "reward_model": example["reward_model"],
+                # 2) use the `idx` counter, *not* example["extra_info"]
+                "extra_info":   {"index": str(idx)},
             }
-            return data
         return process_fn
 
-    # Map the full dataset first
-    train_dataset = train_dataset.map(function=make_map_fn('train'), with_indices=True)
+    train_ds = (
+        ds["train"]
+        .remove_columns(["__index_level_0__", "extra_info"])   # drop the old struct
+        .map(
+            make_map_fn("train"),
+            with_indices=True,
+            remove_columns=[
+                "data_source", "prompt", "ability", "reward_model"
+            ],  # or simply remove all old columns
+        )
+    )
+    # The original extra_info is a struct with three keys index, problem_id, and solution. And the dtype for index is a integer. We need to convert it to a string.
 
-    local_dir = args.local_dir
-    hdfs_dir = args.hdfs_dir
+    # 4) Deduplicate via pandas
+    df = train_ds.to_pandas().reset_index(drop=True)
+    if args.model_type == 'base':
+        df = df.drop_duplicates(subset=['prompt'])
+    else:
+        df = df.drop_duplicates(subset=['prompt'], keep='first')
+    df = df.reset_index(drop=True)
 
-    train_dataset.to_parquet(os.path.join(local_dir, 'train.parquet'))
+    print(f"Original dataset size: {len(train_ds)}")
+    print(f"Dataset size after deduplication: {len(df)}")
 
-    if hdfs_dir is not None:
-        makedirs(hdfs_dir)
+    # 5) Rebuild HF Dataset and write out
+    deduped = datasets.Dataset.from_pandas(df, preserve_index=False)
+    os.makedirs(args.local_dir, exist_ok=True)
+    deduped.to_parquet(os.path.join(args.local_dir, 'train.parquet'))
 
-        copy(src=local_dir, dst=hdfs_dir)
+    if args.hdfs_dir:
+        makedirs(args.hdfs_dir)
+        copy(src=args.local_dir, dst=args.hdfs_dir)

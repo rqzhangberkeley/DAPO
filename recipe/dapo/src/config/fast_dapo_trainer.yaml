@@ -26,7 +26,8 @@ algorithm:
 
 trainer:
   project_name: verl-dapo
-
+  save_metrics_local_dir: metrics
+  save_metric_path: metrics
 curriculum:
   enable: True
   

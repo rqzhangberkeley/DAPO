@@ -83,13 +83,7 @@ if __name__ == '__main__':
                     "ground_truth": answer
                 },
                 "extra_info": {
-                    'split': split,
-                    'index': idx,
-                    "raw_problem": question_raw,
-                    "answer": solution,
-                    "subject": subject,
-                    "level": level,
-                    "unique_id": unique_id,
+                    'index': str(idx)
                 }
             }
             return data
@@ -100,6 +94,7 @@ if __name__ == '__main__':
 
     train_dataset = train_dataset.map(function=make_map_fn('train'), with_indices=True)
     test_dataset = test_dataset.map(function=make_map_fn('test'), with_indices=True)
+    import pdb; pdb.set_trace()
 
     local_dir = args.local_dir
     hdfs_dir = args.hdfs_dir

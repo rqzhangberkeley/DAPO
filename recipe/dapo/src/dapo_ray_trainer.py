@@ -21,6 +21,8 @@ from collections import defaultdict
 from copy import deepcopy
 from pprint import pprint
 import time
+import json
+import os
 
 import numpy as np
 import torch
@@ -60,6 +62,10 @@ class RayDAPOTrainer(RayPPOTrainer):
         )
 
         self.global_steps = 0
+        metrics_dir = self.config.trainer.save_metrics_local_dir
+        os.makedirs(metrics_dir, exist_ok=True)
+        jl_file = os.path.join(metrics_dir, f"{self.config.trainer.save_metric_path}.jsonl")
+        jf = open(jl_file, "a") # RZ: Append to the file. We stream the metrics as json lines.
 
         # load checkpoint before doing anything
         self._load_checkpoint()
@@ -70,6 +76,9 @@ class RayDAPOTrainer(RayPPOTrainer):
             val_metrics = self._validate()
             pprint(f"Initial validation metrics: {val_metrics}")
             logger.log(data=val_metrics, step=self.global_steps)
+            jf.write(json.dumps({'step': self.global_steps, **val_metrics}) + "\n") # Save metrics to JSON file
+            jf.flush() # get flushed to disk immediately
+            os.fsync(jf.fileno())
             if self.config.trainer.get("val_only", False):
                 return
 
@@ -226,102 +235,102 @@ class RayDAPOTrainer(RayPPOTrainer):
                             print(f'meta_info = {batch.meta_info.keys()=}')
                             print(f'uids = {batch.non_tensor_batch["uid"]}')
 
-                    # Curriculum learning implementation
-                    if self.config.curriculum.enable:
-                        # Get the trajectory batch size and original rollout size
-                        traj_bsz = len(batch)
-                        n = self.config.actor_rollout_ref.rollout.n
-                        n_continue = self.config.actor_rollout_ref.rollout.n_continue
+                    # # Curriculum learning implementation
+                    # if self.config.curriculum.enable:
+                    #     # Get the trajectory batch size and original rollout size
+                    #     traj_bsz = len(batch)
+                    #     n = self.config.actor_rollout_ref.rollout.n
+                    #     n_continue = self.config.actor_rollout_ref.rollout.n_continue
 
-                        # Extract only the prompt part of each trajectory, but maintain the original UIDs
-                        prompt_ids = list(range(0, traj_bsz, n))
-                        prompt_batch = batch.select_idxs(prompt_ids).truncate(start=0, end=self.config.data.max_prompt_length)
+                    #     # Extract only the prompt part of each trajectory, but maintain the original UIDs
+                    #     prompt_ids = list(range(0, traj_bsz, n))
+                    #     prompt_batch = batch.select_idxs(prompt_ids).truncate(start=0, end=self.config.data.max_prompt_length)
                         
-                        # Keep only the input_ids, attention_mask, position_ids and uid for generation
-                        gen_batch = prompt_batch.select(
-                            batch_keys=["input_ids", "attention_mask", "position_ids"],
-                            non_tensor_batch_keys=["uid"],
-                        )
+                    #     # Keep only the input_ids, attention_mask, position_ids and uid for generation
+                    #     gen_batch = prompt_batch.select(
+                    #         batch_keys=["input_ids", "attention_mask", "position_ids"],
+                    #         non_tensor_batch_keys=["uid"],
+                    #     )
                         
-                        # Generate additional n_continue responses for each qualified prompt
-                        gen_continue_start_time = time.time()
-                        with _timer("gen-continue", timing_raw):
-                            gen_batch.meta_info["continue"] = True  # Set continue flag in meta_info
-                            gen_batch_continue_output = self.actor_rollout_wg.generate_sequences(gen_batch)
-                        gen_continue_end_time = time.time()
-                        print(f"Time taken for generation of continue: gen_continue_{gen_continue_end_time - gen_continue_start_time} seconds")
+                    #     # Generate additional n_continue responses for each qualified prompt
+                    #     gen_continue_start_time = time.time()
+                    #     with _timer("gen-continue", timing_raw):
+                    #         gen_batch.meta_info["continue"] = True  # Set continue flag in meta_info
+                    #         gen_batch_continue_output = self.actor_rollout_wg.generate_sequences(gen_batch)
+                    #     gen_continue_end_time = time.time()
+                    #     print(f"Time taken for generation of continue: gen_continue_{gen_continue_end_time - gen_continue_start_time} seconds")
                         
-                        # Create a new batch with the original prompts and the newly generated responses
-                        # First, make copies of the prompts for each new generation
-                        continue_batch = prompt_batch.repeat(repeat_times=n_continue, interleave=True).select(
-                            batch_keys=[],
-                            non_tensor_batch_keys=['data_source', 'ability', 'reward_model', 'extra_info', 'index', 'uid'],
-                            meta_info_keys=[],
-                        )  # RZ: Make proper keys before trying .union()
-                        continue_batch = continue_batch.union(gen_batch_continue_output)
+                    #     # Create a new batch with the original prompts and the newly generated responses
+                    #     # First, make copies of the prompts for each new generation
+                    #     continue_batch = prompt_batch.repeat(repeat_times=n_continue, interleave=True).select(
+                    #         batch_keys=[],
+                    #         non_tensor_batch_keys=['data_source', 'ability', 'reward_model', 'extra_info', 'index', 'uid'],
+                    #         meta_info_keys=[],
+                    #     )  # RZ: Make proper keys before trying .union()
+                    #     continue_batch = continue_batch.union(gen_batch_continue_output)
                         
-                        # Compute reward scores for the new generations
-                        with _timer("reward-continue", timing_raw):
-                            if self.use_rm:
-                                # Compute reward model scores
-                                reward_tensor = self.rm_wg.compute_rm_score(continue_batch)
-                                continue_batch = continue_batch.union(reward_tensor)
+                    #     # Compute reward scores for the new generations
+                    #     with _timer("reward-continue", timing_raw):
+                    #         if self.use_rm:
+                    #             # Compute reward model scores
+                    #             reward_tensor = self.rm_wg.compute_rm_score(continue_batch)
+                    #             continue_batch = continue_batch.union(reward_tensor)
                             
-                            # Combine with rule-based reward
-                            try:
-                                reward_result = self.reward_fn(continue_batch, return_dict=True)
-                                reward_tensor = reward_result["reward_tensor"]
-                                reward_extra_infos_dict = reward_result["reward_extra_info"]
-                            except Exception as e:
-                                print(f"Error in reward_fn for curriculum: {e}")
-                                reward_tensor = self.reward_fn(continue_batch)
-                                reward_extra_infos_dict = {}
+                    #         # Combine with rule-based reward
+                    #         try:
+                    #             reward_result = self.reward_fn(continue_batch, return_dict=True)
+                    #             reward_tensor = reward_result["reward_tensor"]
+                    #             reward_extra_infos_dict = reward_result["reward_extra_info"]
+                    #         except Exception as e:
+                    #             print(f"Error in reward_fn for curriculum: {e}")
+                    #             reward_tensor = self.reward_fn(continue_batch)
+                    #             reward_extra_infos_dict = {}
                             
-                            continue_batch.batch["token_level_scores"] = reward_tensor
+                    #         continue_batch.batch["token_level_scores"] = reward_tensor
                             
-                            if reward_extra_infos_dict:
-                                continue_batch.non_tensor_batch.update(
-                                    {k: np.array(v) for k, v in reward_extra_infos_dict.items()}
-                                )
+                    #         if reward_extra_infos_dict:
+                    #             continue_batch.non_tensor_batch.update(
+                    #                 {k: np.array(v) for k, v in reward_extra_infos_dict.items()}
+                    #             )
                             
-                            # Apply KL penalty if needed
-                            if self.config.algorithm.use_kl_in_reward:
-                                continue_batch, kl_continue_metrics = apply_kl_penalty(
-                                    continue_batch, kl_ctrl=self.kl_ctrl_in_reward, kl_penalty=self.config.algorithm.kl_penalty
-                                )
-                                metrics.update({f"curriculum_{k}": v for k, v in kl_continue_metrics.items()})
-                            else:
-                                continue_batch.batch["token_level_rewards"] = continue_batch.batch["token_level_scores"]
+                    #         # Apply KL penalty if needed
+                    #         if self.config.algorithm.use_kl_in_reward:
+                    #             continue_batch, kl_continue_metrics = apply_kl_penalty(
+                    #                 continue_batch, kl_ctrl=self.kl_ctrl_in_reward, kl_penalty=self.config.algorithm.kl_penalty
+                    #             )
+                    #             metrics.update({f"curriculum_{k}": v for k, v in kl_continue_metrics.items()})
+                    #         else:
+                    #             continue_batch.batch["token_level_rewards"] = continue_batch.batch["token_level_scores"]
                         
-                        # Combine the original batch with the new generations
-                        combined_batch = DataProto.concat([batch, continue_batch])
+                    #     # Combine the original batch with the new generations
+                    #     combined_batch = DataProto.concat([batch, continue_batch])
 
-                        # Reorder the batch so that responses for the same prompt are together
-                        # After interleaving, for each prompt:
-                        # - The first n responses will be from the original batch
-                        # - The next n_continue responses will be from the continue_batch
-                        # This ensures a structure where (n + n_continue) responses for each prompt
-                        # are in contiguous locations in the tensor
-                        combined_batch = combined_batch.interleave_by_uid()
+                    #     # Reorder the batch so that responses for the same prompt are together
+                    #     # After interleaving, for each prompt:
+                    #     # - The first n responses will be from the original batch
+                    #     # - The next n_continue responses will be from the continue_batch
+                    #     # This ensures a structure where (n + n_continue) responses for each prompt
+                    #     # are in contiguous locations in the tensor
+                    #     combined_batch = combined_batch.interleave_by_uid()
                         
-                        # Verify the correct interleaving (optional debug code)
-                        if self.config.curriculum.get("debug_interleaving", False):
-                            print("Verifying interleaved batch structure...")
-                            uid_to_counts = defaultdict(int)
-                            for idx, uid in enumerate(combined_batch.non_tensor_batch["uid"]):
-                                uid_to_counts[uid] += 1
-                                # Check if we've seen all responses for this prompt
-                                if uid_to_counts[uid] == n + n_continue:
-                                    # Verify that the responses are contiguous
-                                    start_idx = idx - (n + n_continue) + 1
-                                    expected_uids = [uid] * (n + n_continue)
-                                    actual_uids = combined_batch.non_tensor_batch["uid"][start_idx:idx+1]
-                                    assert all(a == e for a, e in zip(actual_uids, expected_uids)), \
-                                        f"Non-contiguous responses for prompt {uid}"
-                            print(f"Interleaving verified: All {len(uid_to_counts)} prompts have contiguous responses")
+                    #     # Verify the correct interleaving (optional debug code)
+                    #     if self.config.curriculum.get("debug_interleaving", False):
+                    #         print("Verifying interleaved batch structure...")
+                    #         uid_to_counts = defaultdict(int)
+                    #         for idx, uid in enumerate(combined_batch.non_tensor_batch["uid"]):
+                    #             uid_to_counts[uid] += 1
+                    #             # Check if we've seen all responses for this prompt
+                    #             if uid_to_counts[uid] == n + n_continue:
+                    #                 # Verify that the responses are contiguous
+                    #                 start_idx = idx - (n + n_continue) + 1
+                    #                 expected_uids = [uid] * (n + n_continue)
+                    #                 actual_uids = combined_batch.non_tensor_batch["uid"][start_idx:idx+1]
+                    #                 assert all(a == e for a, e in zip(actual_uids, expected_uids)), \
+                    #                     f"Non-contiguous responses for prompt {uid}"
+                    #         print(f"Interleaving verified: All {len(uid_to_counts)} prompts have contiguous responses")
                         
-                        # Update the batch for training
-                        batch = combined_batch
+                    #     # Update the batch for training
+                    #     batch = combined_batch
 
                     # balance the number of valid tokens on each dp rank.
                     # Note that this breaks the order of data inside the batch.
@@ -411,6 +420,10 @@ class RayDAPOTrainer(RayPPOTrainer):
                 metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
                 # TODO: implement actual tflpo and theoretical tflpo
                 n_gpus = self.resource_pool_manager.get_n_gpus()
+                if 'testing' in timing_raw.keys():
+                    timing_raw['step_without_testing'] = timing_raw['step'] - timing_raw['testing']
+                else:
+                    timing_raw['step_without_testing'] = timing_raw['step']
                 metrics.update(compute_throughout_metrics(batch=batch, timing_raw=timing_raw, n_gpus=n_gpus))
                 timing_raw = defaultdict(float)  # clear timing
 
@@ -419,12 +432,22 @@ class RayDAPOTrainer(RayPPOTrainer):
                 num_prompt_in_batch = 0
                 num_gen_batches = 0
 
-                # TODO: make a canonical logger that supports various backend
+                # Add total training time to metrics
+                current_time = time.time()
+                metrics["train/total_training_time_seconds"] = current_time - self.training_start_time
+                metrics["train/global_steps"] = self.global_steps
+                metrics['train/epoch'] = epoch
+                metrics['train/num_prompts_in_batch'] = num_prompt_in_batch
+
                 logger.log(data=metrics, step=self.global_steps)
+                jf.write(json.dumps({'step': self.global_steps, **metrics}) + "\n") # Save metrics to JSON file
+                jf.flush() # get flushed to disk immediately
+                os.fsync(jf.fileno())
 
                 if is_last_step:
                     pprint(f"Final validation metrics: {last_val_metrics}")
                     progress_bar.close()
+                    jf.close()
                     return
 
                 progress_bar.update(1)

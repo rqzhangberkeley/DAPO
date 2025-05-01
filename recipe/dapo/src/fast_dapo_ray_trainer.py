@@ -21,6 +21,8 @@ from collections import defaultdict
 from copy import deepcopy
 from pprint import pprint
 import time
+import json
+import os
 
 import numpy as np
 import torch
@@ -85,6 +87,10 @@ class RayFastDAPOTrainer(RayPPOTrainer):
         )
 
         self.global_steps = 0
+        metrics_dir = self.config.trainer.save_metrics_local_dir
+        os.makedirs(metrics_dir, exist_ok=True)
+        jl_file = os.path.join(metrics_dir, f"{self.config.trainer.save_metric_path}.jsonl")
+        jf = open(jl_file, "a") # RZ: Append to the file. We stream the metrics as json lines.
 
         # The corner cases have not been implemented for fast DAPO.
         if self.config.algorithm.adv_estimator== AdvantageEstimator.REMAX:
@@ -103,6 +109,9 @@ class RayFastDAPOTrainer(RayPPOTrainer):
             val_metrics = self._validate()
             pprint(f"Initial validation metrics: {val_metrics}")
             logger.log(data=val_metrics, step=self.global_steps)
+            jf.write(json.dumps({'step': self.global_steps, **val_metrics}) + "\n") # Save metrics to JSON file
+            jf.flush() # get flushed to disk immediately
+            os.fsync(jf.fileno())
             if self.config.trainer.get("val_only", False):
                 return
 
@@ -114,16 +123,15 @@ class RayFastDAPOTrainer(RayPPOTrainer):
 
         timing_raw = defaultdict(float)
         batch = None
-        num_prompt_in_batch = 0
         num_gen_batches = 0
+        metrics = {}
+        self.training_start_time = time.time()
         for epoch in range(self.config.trainer.total_epochs):
             for batch_dict in self.train_dataloader:
                 is_last_step = self.global_steps >= self.total_training_steps
 
                 if not self.data_controller.is_ready_for_training(): # not ready for training. Do Inference.
                     print(f"We have enough prompts for training. We have {self.data_controller.get_num_prompts_for_training()=} prompts ready for training.")
-
-                    metrics = {}
 
                     # get a new batch for inference
                     new_batch: DataProto = DataProto.from_single_dict(batch_dict) 
@@ -286,17 +294,32 @@ class RayFastDAPOTrainer(RayPPOTrainer):
                     metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
                     # TODO: implement actual tflpo and theoretical tflpo
                     n_gpus = self.resource_pool_manager.get_n_gpus()
+                    if 'testing' in timing_raw.keys():
+                        timing_raw['step_without_testing'] = timing_raw['step'] - timing_raw['testing']
+                    else:
+                        timing_raw['step_without_testing'] = timing_raw['step']
                     metrics.update(compute_throughout_metrics(batch=batch, timing_raw=timing_raw, n_gpus=n_gpus))
                     timing_raw = defaultdict(float)  # clear timing
 
+                    # Add total training time to metrics
+                    current_time = time.time()
+                    metrics["train/total_training_time_seconds"] = current_time - self.training_start_time
                     metrics["train/num_gen_batches"] = self.data_controller.get_num_gen_batches()
+                    metrics["train/num_prompts_in_batch"] = self.data_controller.get_num_prompts_for_training()
+                    metrics["train/global_steps"] = self.global_steps
+                    metrics['train/epoch'] = epoch
                     self.data_controller.reset_num_gen_batches()
                     logger.log(data=metrics, step=self.global_steps)
-
+                    jf.write(json.dumps({'step': self.global_steps, **metrics}) + "\n") # Save metrics to JSON file
+                    jf.flush() # get flushed to disk immediately
+                    os.fsync(jf.fileno())
+                    
                     if is_last_step:
                         pprint(f"Final validation metrics: {last_val_metrics}")
                         progress_bar.close()
+                        jf.close()
                         return
 
                     progress_bar.update(1)
                     self.global_steps += 1 # Here, 'step' means actual RL step (so the number of training steps within one step is fixed).
+                    metrics = {} # clear metrics for next batch.
