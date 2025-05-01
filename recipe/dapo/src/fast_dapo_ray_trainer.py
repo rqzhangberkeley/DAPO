@@ -294,10 +294,14 @@ class RayFastDAPOTrainer(RayPPOTrainer):
                     metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
                     # TODO: implement actual tflpo and theoretical tflpo
                     n_gpus = self.resource_pool_manager.get_n_gpus()
-                    if 'testing' in timing_raw.keys():
-                        timing_raw['step_without_testing'] = timing_raw['step'] - timing_raw['testing']
-                    else:
-                        timing_raw['step_without_testing'] = timing_raw['step']
+
+                    non_training_labels = ['testing', 'save_checkpoint']
+                    time_pure_training = timing_raw['step']
+                    for label in non_training_labels:
+                        if label in timing_raw.keys():
+                            time_pure_training -= timing_raw[label]
+                    timing_raw['time_pure_training'] = time_pure_training
+                    
                     metrics.update(compute_throughout_metrics(batch=batch, timing_raw=timing_raw, n_gpus=n_gpus))
                     timing_raw = defaultdict(float)  # clear timing
 
