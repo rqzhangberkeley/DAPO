@@ -1,14 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name=RLOO-7B-DEEPSCALER-N24-offload       # Job name
-#SBATCH --output=./logs/RLOO-7B-DEEPSCALER-N24-offload_%j.out  # Output file (%j will be replaced by job ID)
-#SBATCH --error=./logs/RLOO-7B-DEEPSCALER-N24-offload_%j.err   # Error file
+#SBATCH --job-name=RLOO-7B-bigRL-N24-offload-Llama       # Job name
+#SBATCH --output=./logs/RLOO-7B-bigRL-N24-offload-Llama_%j.out  # Output file (%j will be replaced by job ID)
+#SBATCH --error=./logs/RLOO-7B-bigRL-N24-offload-Llama_%j.err   # Error file
 #SBATCH --nodes=1                 # Number of nodes
 #SBATCH --ntasks-per-node=1       # Number of tasks per node
-#SBATCH --cpus-per-task=256         # Number of CPU cores per task
+#SBATCH --cpus-per-task=32         # Number of CPU cores per task
 #SBATCH --gpus-per-node=4              # Number of GPUs (4 GPUs per node)
 #SBATCH --mem=450G                # Memory per node
-#SBATCH --time=1-23:00:00           # Time limit (24 hours)
-#SBATCH --account=beok-dtai-gh    # Account name (adjust to your account)
+#SBATCH --time=1-23:59:59           # Time limit (24 hours)
+#SBATCH --account=betg-dtai-gh    # Account name (adjust to your account)
 #SBATCH --mail-user=rqzhang@berkeley.edu  # Email address to receive notifications
 #SBATCH --mail-type=BEGIN,END,FAIL         # Send email at begin, end, or fail of job
 
@@ -21,9 +21,11 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
 module load cuda/12.6.1
 module load gcc/11.4.0
 wandb login 363018e9dc8339fae726d3b48a839f262c457194
+huggingface-cli login --token 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
+
 
 project_name='DAPO'
-exp_name='7B-Math-RLOO-DeepScaleR-N24-offload'
+exp_name='7B-bigRL-RLOO-N24-offload-Llama'
 
 adv_estimator=rloo
 
@@ -41,7 +43,7 @@ max_response_length=3072
 max_num_batched_tokens=8192
 
 # Mute the length penalty
-enable_overlong_buffer=False
+enable_overlong_buffer=False # not using DAPO
 overlong_buffer_len=512
 overlong_penalty_factor=1.0
 
@@ -51,13 +53,17 @@ enable_filter_groups=False # Whether we filter the prompts base on the pass rate
 filter_groups_metric=acc # The metric to filter the prompts.
 max_num_gen_batches=50 # The maximum number of generations to generate. If we exceed this number, we will stop generating and raise error.
 
+#########################
 train_prompt_bsz=16
 gen_prompt_bsz=16
 train_prompt_mini_bsz=16
 n_resp_per_prompt=24
 n_resp_continue=0
-n_resp_per_prompt_val=1
 
+learning_rate=1e-7
+#########################
+
+n_resp_per_prompt_val=1
 total_epochs=1
 enable_curriculum=False
 val_before_train=True
@@ -73,16 +79,17 @@ RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
 NNODES=${NNODES:-1}
 GPUS_PER_NODE=${GPUS_PER_NODE:-4}
 # Paths
-MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-Math-7B"}
+MODEL_PATH=${MODEL_PATH:-"meta-llama/Meta-Llama-3.1-8B-Instruct"}
 use_chat_template=True
 val_only=False
 
-CKPT_PATH=${CKPT_PATH:-"/work/nvme/beok/rzhang15/checkpoints/RLOO/${exp_name}/$(date +%Y%m%d_%H%M%S)"}
+CKPT_PATH=${CKPT_PATH:-"/work/nvme/betg/rzhang15/checkpoints/RLOO/${exp_name}/$(date +%Y%m%d_%H%M%S)"}
 mkdir -p ${CKPT_PATH}
-TRAIN_FILE=${TRAIN_FILE:-"./data/DeepScaleR-instruct/train.parquet"}
+TRAIN_FILE=${TRAIN_FILE:-"./data/bigRL-instruct/train.parquet"} # RZ: New experiments. We use Math500.
 
 # Algorithm
 temperature=1.0
+val_temperature=0.0 # this is for Llama.
 top_p=1.0
 top_k=-1 # 0 for HF rollout, -1 for vLLM rollout
 
@@ -97,7 +104,7 @@ offload=True
 #     -- 
 PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_dapo \
     data.train_files="${TRAIN_FILE}" \
-    data.val_files=[\"./data/AIME2024-dup16-instruct/train.parquet\",\"./data/AIME2025-dup16-instruct/train.parquet\",\"./data/Math500-instruct/test.parquet\",\"./data/AMC23-dup4-instruct/train.parquet\",\"./data/DAPO-17k-instruct/test.parquet\"] \
+    data.val_files=[\"./data/Math500-instruct/test.parquet\"] \
     data.prompt_key=prompt \
     data.truncation='left' \
     data.max_prompt_length=${max_prompt_length} \
@@ -131,7 +138,7 @@ PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_dapo \
     +actor_rollout_ref.model.override_config.embd_pdrop=0. \
     +actor_rollout_ref.model.override_config.resid_pdrop=0. \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
-    actor_rollout_ref.actor.optim.lr=1e-6 \
+    actor_rollout_ref.actor.optim.lr=${learning_rate} \
     actor_rollout_ref.actor.optim.lr_warmup_steps=10 \
     actor_rollout_ref.actor.optim.weight_decay=0.1 \
     actor_rollout_ref.actor.ppo_mini_batch_size=${train_prompt_mini_bsz} \
@@ -150,7 +157,7 @@ PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_dapo \
     actor_rollout_ref.rollout.temperature=${temperature} \
     actor_rollout_ref.rollout.top_p=${top_p} \
     actor_rollout_ref.rollout.top_k="${top_k}" \
-    actor_rollout_ref.rollout.val_kwargs.temperature=${temperature} \
+    actor_rollout_ref.rollout.val_kwargs.temperature=${val_temperature} \
     actor_rollout_ref.rollout.val_kwargs.top_p=${top_p} \
     actor_rollout_ref.rollout.val_kwargs.top_k=${top_k} \
     actor_rollout_ref.rollout.val_kwargs.do_sample=True \

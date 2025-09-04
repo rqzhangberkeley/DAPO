@@ -65,7 +65,10 @@ class RayFastDAPOTrainer(RayPPOTrainer):
             max_num_gen_batches=config.algorithm.filter_groups.max_num_gen_batches,
             n_gpus=self.resource_pool_manager.get_n_gpus(),
             max_prompt_length=self.config.data.max_prompt_length,
-            max_buffer_size=config.data.train_batch_size*(config.actor_rollout_ref.rollout.n + config.actor_rollout_ref.rollout.n_continue)*3
+            max_buffer_size=config.data.train_batch_size*(config.actor_rollout_ref.rollout.n + config.actor_rollout_ref.rollout.n_continue)*3,
+            tokenizer=tokenizer,
+            kept_file = None, # the file to save the kept prompts
+            filtered_file = None, # the file to save the filtered prompts
         )
 
     def fit(self):
@@ -91,6 +94,12 @@ class RayFastDAPOTrainer(RayPPOTrainer):
         os.makedirs(metrics_dir, exist_ok=True)
         jl_file = os.path.join(metrics_dir, f"{self.config.trainer.save_metric_path}.jsonl")
         jf = open(jl_file, "a") # RZ: Append to the file. We stream the metrics as json lines.
+
+        # the save path for the saved path and the filtered path
+        kept_path = os.path.join(metrics_dir, f"{self.config.trainer.save_metric_path}_kept_path.jsonl")
+        filtered_path = os.path.join(metrics_dir, f"{self.config.trainer.save_metric_path}_filtered_path.jsonl")
+        self.data_controller.kept_file = open(kept_path, "a")
+        self.data_controller.filtered_file = open(filtered_path, "a")
 
         # The corner cases have not been implemented for fast DAPO.
         if self.config.algorithm.adv_estimator== AdvantageEstimator.REMAX:
@@ -196,21 +205,25 @@ class RayFastDAPOTrainer(RayPPOTrainer):
                             new_batch.batch["token_level_rewards"] = new_batch.batch["token_level_scores"]
                         
                         # Update prompt statistics and get filtered prompts/trajectories
-                        self.data_controller.update_prompts(new_batch, self.config.algorithm.filter_groups.metric)
+                        self.data_controller.update_prompts(new_batch, self.config.algorithm.filter_groups.metric, self.global_steps) # update: a new argument 'global_steps'.
                         continue
                             
                 elif self.data_controller.is_ready_for_training(): # start training when we have enough qualified prompts.
                     print(f"We have {self.data_controller.get_num_prompts_for_training()=} prompts ready for training.")
                     if not metrics:
                         metrics = {} # if we start the training without doing any additional inferences (there coould be enough qualified prompts in the buffer), we need to initialize the metrics.
-                    batch = self.data_controller.get_training_data(prompt_batch_size = self.config.data.train_batch_size) # get a batch of training data.
+                    batch = self.data_controller.get_training_data(prompt_batch_size = self.config.data.train_batch_size, global_step=self.global_steps) # get a batch of training data. # RZ: add a new argument 'global_step'.
+                    print(f'size of batch={batch.batch["attention_mask"].shape}')
+                    # print(f'uid={batch.non_tensor_batch["uid"]}')
 
                     with _timer("step", timing_raw):
+                        ########## RZ: We shall pay special attention to this step ###############
                         # balance the number of valid tokens on each dp rank.
                         # Note that this breaks the order of data inside the batch.
                         # Please take care when you implement group based adv computation such as GRPO and rloo
                         if self.config.trainer.balance_batch:
                             self._balance_batch(batch, metrics=metrics)
+                        ########## RZ: We shall pay special attention to this step ###############
 
                         # compute global_valid tokens
                         batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
@@ -248,9 +261,11 @@ class RayFastDAPOTrainer(RayPPOTrainer):
                                 gamma=self.config.algorithm.gamma,
                                 lam=self.config.algorithm.lam,
                                 num_repeat=self.config.actor_rollout_ref.rollout.n,
+                                ####### RZ: Why here is config.actor_rollout_ref.rollout.n? #####
                                 norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
                             )
                         adv_end_time = time.time()
+                        print(f'batch size {batch.batch["input_ids"].shape}')
                         print(f"Time taken for adv: adv_{adv_end_time - adv_start_time} seconds")
 
                         # update critic

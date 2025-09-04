@@ -93,7 +93,7 @@ class TaskRunner:
         # instantiate tokenizer
         from verl.utils import hf_processor, hf_tokenizer
 
-        tokenizer = hf_tokenizer(local_path)
+        tokenizer = hf_tokenizer(local_path) # this is the tokenizer for the model. Not a string.
         processor = hf_processor(local_path, use_fast=True)  # used for multimodal LLM, could be none
 
         # define worker classes

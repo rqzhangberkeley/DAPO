@@ -250,6 +250,7 @@ def compute_rloo_outcome_advantage(
                 )
         scores = scores.unsqueeze(-1) * response_mask
 
+    # print(f'Compute the advantage. Size = {scores.shape}')
     return scores, scores
 
 

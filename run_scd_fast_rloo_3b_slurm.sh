@@ -1,14 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name=FAST-RLOO-7B-bigRL-N4+20-offload-Llama       # Job name
-#SBATCH --output=./logs/FAST-RLOO-7B-bigRL-N4+20-offload-Llama_%j.out  # Output file (%j will be replaced by job ID)
-#SBATCH --error=./logs/FAST-RLOO-7B-bigRL-N4+20-offload-Llama_%j.err   # Error file
+#SBATCH --job-name=FAST-RLOO-3B-SCD-N8+16-offload-B32-middle      # Job name
+#SBATCH --output=./logs/FAST-RLOO-3B-SCD-N8+16-offload-B32-middle_%j.out  # Output file (%j will be replaced by job ID)
+#SBATCH --error=./logs/FAST-RLOO-3B-SCD-N8+16-offload-B32-middle_%j.err   # Error file
 #SBATCH --nodes=1                 # Number of nodes
 #SBATCH --ntasks-per-node=1       # Number of tasks per node
 #SBATCH --cpus-per-task=32         # Number of CPU cores per task
 #SBATCH --gpus-per-node=4              # Number of GPUs (4 GPUs per node)
-#SBATCH --mem=500G                # Memory per node
-#SBATCH --time=00:15:00           # Time limit (24 hours)
-#SBATCH --account=betg-dtai-gh    # Account name (adjust to your account)
+#SBATCH --mem=450G                # Memory per node
+#SBATCH --time=10:00:00           # Time limit (24 hours)
+#SBATCH --account=bffw-dtai-gh    # Account name (adjust to your account)
 #SBATCH --mail-user=rqzhang@berkeley.edu  # Email address to receive notifications
 #SBATCH --mail-type=BEGIN,END,FAIL         # Send email at begin, end, or fail of job
 
@@ -21,10 +21,11 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
 module load cuda/12.6.1
 module load gcc/11.4.0
 wandb login 363018e9dc8339fae726d3b48a839f262c457194
-huggingface-cli login --token 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
+# huggingface-cli login --token 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
+
 
 project_name='DAPO'
-exp_name='7B-bigRL-FAST-RLOO-N4+20-offload-Llama-lr1e-6'
+exp_name='3B-SCD-FAST-RLOO-N8+16-offload-B32-middle'
 
 adv_estimator=rloo
 
@@ -36,13 +37,14 @@ kl_loss_coef=0.0
 clip_ratio_low=0.2
 clip_ratio_high=0.2 # Vanilla RLOO.
 gpu_memory_utilization=0.6
+entropy_coeff=0.001
 
-max_prompt_length=1024
-max_response_length=3072
+max_prompt_length=256
+max_response_length=1024
 max_num_batched_tokens=8192
 
 # Mute the length penalty
-enable_overlong_buffer=False
+enable_overlong_buffer=False # not using DAPO
 overlong_buffer_len=512
 overlong_penalty_factor=1.0
 
@@ -53,19 +55,19 @@ filter_groups_metric=acc # The metric to filter the prompts.
 max_num_gen_batches=50 # The maximum number of generations to generate. If we exceed this number, we will stop generating and raise error.
 
 #########################
-train_prompt_bsz=16
-gen_prompt_bsz=64
-train_prompt_mini_bsz=16
-n_resp_per_prompt=4
-n_resp_continue=20
+train_prompt_bsz=32
+gen_prompt_bsz=128
+train_prompt_mini_bsz=32
+n_resp_per_prompt=8
+n_resp_continue=16
 
 learning_rate=1e-6
 #########################
 
 n_resp_per_prompt_val=1
-total_epochs=1
+total_epochs=10
 enable_curriculum=True
-val_before_train=False
+val_before_train=True
 
 save_freq=50
 max_ckpt_to_keep=1
@@ -78,14 +80,13 @@ RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
 NNODES=${NNODES:-1}
 GPUS_PER_NODE=${GPUS_PER_NODE:-4}
 # Paths
-MODEL_PATH=${MODEL_PATH:-"meta-llama/Meta-Llama-3.1-8B-Instruct"}
-use_chat_template=True
+MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-3B"}
+use_chat_template=False # we train the base model on SCD tasks.
 val_only=False
 
 CKPT_PATH=${CKPT_PATH:-"/work/nvme/betg/rzhang15/checkpoints/RLOO/${exp_name}/$(date +%Y%m%d_%H%M%S)"}
-# there is one experiment that I log in RLOO folder.
 mkdir -p ${CKPT_PATH}
-TRAIN_FILE=${TRAIN_FILE:-"./data/bigRL-instruct/train.parquet"} # RZ: New experiments. We use Math500.
+TRAIN_FILE=${TRAIN_FILE:-"./data/simple_count_down_base/count_down_mix_middle_train.parquet"} # RZ: New experiments. We use simple countdown.
 
 # Algorithm
 temperature=1.0
@@ -95,8 +96,8 @@ top_k=-1 # 0 for HF rollout, -1 for vLLM rollout
 
 # Mathematically equivalent
 use_dynamic_bsz=False
-infer_micro_batch_size=16
-train_micro_batch_size=16
+infer_micro_batch_size=32
+train_micro_batch_size=32
 offload=True
 
 # ray job submit --no-wait --runtime-env="${RUNTIME_ENV}" \
@@ -104,7 +105,7 @@ offload=True
 #     -- 
 PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_fast_dapo \
     data.train_files="${TRAIN_FILE}" \
-    data.val_files=[\"./data/Math500-instruct/test.parquet\"] \
+    data.val_files=[\"./data/simple_count_down_base/count_down_mix_middle_test.parquet\"] \
     data.prompt_key=prompt \
     data.truncation='left' \
     data.max_prompt_length=${max_prompt_length} \
@@ -130,7 +131,6 @@ PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_fast_dapo \
     actor_rollout_ref.actor.use_dynamic_bsz=${use_dynamic_bsz} \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=${use_dynamic_bsz} \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=${use_dynamic_bsz} \
-    actor_rollout_ref.rollout.engine_kwargs.swap_space=32 \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=$((max_prompt_length + max_response_length)) \
     actor_rollout_ref.ref.log_prob_max_token_len_per_gpu=$((max_prompt_length + max_response_length)) \
     actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=$((max_prompt_length + max_response_length)) \
@@ -146,7 +146,7 @@ PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_fast_dapo \
     actor_rollout_ref.actor.ppo_micro_batch_size=${train_micro_batch_size} \
     actor_rollout_ref.actor.fsdp_config.param_offload=${offload} \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=${offload} \
-    actor_rollout_ref.actor.entropy_coeff=0 \
+    actor_rollout_ref.actor.entropy_coeff=${entropy_coeff} \
     actor_rollout_ref.actor.grad_clip=1.0 \
     actor_rollout_ref.actor.loss_agg_mode=${loss_agg_mode} \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=1 \

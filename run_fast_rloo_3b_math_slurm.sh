@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=FAST-RLOO-7B-bigRL-N4+20-offload-Llama       # Job name
-#SBATCH --output=./logs/FAST-RLOO-7B-bigRL-N4+20-offload-Llama_%j.out  # Output file (%j will be replaced by job ID)
-#SBATCH --error=./logs/FAST-RLOO-7B-bigRL-N4+20-offload-Llama_%j.err   # Error file
+#SBATCH --job-name=FAST-RLOO-3B-bigRL-N4+20-offload-Llama       # Job name
+#SBATCH --output=./logs/FAST-RLOO-3B-bigRL-N4+20-offload-Llama_%j.out  # Output file (%j will be replaced by job ID)
+#SBATCH --error=./logs/FAST-RLOO-3B-bigRL-N4+20-offload-Llama_%j.err   # Error file
 #SBATCH --nodes=1                 # Number of nodes
 #SBATCH --ntasks-per-node=1       # Number of tasks per node
 #SBATCH --cpus-per-task=32         # Number of CPU cores per task
 #SBATCH --gpus-per-node=4              # Number of GPUs (4 GPUs per node)
 #SBATCH --mem=500G                # Memory per node
-#SBATCH --time=00:15:00           # Time limit (24 hours)
+#SBATCH --time=01:00:00           # Time limit (24 hours)
 #SBATCH --account=betg-dtai-gh    # Account name (adjust to your account)
 #SBATCH --mail-user=rqzhang@berkeley.edu  # Email address to receive notifications
 #SBATCH --mail-type=BEGIN,END,FAIL         # Send email at begin, end, or fail of job
@@ -24,7 +24,7 @@ wandb login 363018e9dc8339fae726d3b48a839f262c457194
 huggingface-cli login --token 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
 
 project_name='DAPO'
-exp_name='7B-bigRL-FAST-RLOO-N4+20-offload-Llama-lr1e-6'
+exp_name='3B-bigRL-FAST-RLOO-N4+20-offload-Llama-lr1e-6'
 
 adv_estimator=rloo
 
@@ -78,7 +78,7 @@ RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
 NNODES=${NNODES:-1}
 GPUS_PER_NODE=${GPUS_PER_NODE:-4}
 # Paths
-MODEL_PATH=${MODEL_PATH:-"meta-llama/Meta-Llama-3.1-8B-Instruct"}
+MODEL_PATH=${MODEL_PATH:-"meta-llama/Llama-3.2-3B-Instruct"}
 use_chat_template=True
 val_only=False
 

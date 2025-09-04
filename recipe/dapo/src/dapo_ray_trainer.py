@@ -232,9 +232,9 @@ class RayDAPOTrainer(RayPPOTrainer):
                             traj_bsz = self.config.data.train_batch_size * self.config.actor_rollout_ref.rollout.n
                             batch = batch[:traj_bsz]
                             print(f'Size = {batch.batch["input_ids"].shape=}')
-                            print(f'non_tensor_batch = {batch.non_tensor_batch.keys()=}')
-                            print(f'meta_info = {batch.meta_info.keys()=}')
-                            print(f'uids = {batch.non_tensor_batch["uid"]}')
+                            # print(f'non_tensor_batch = {batch.non_tensor_batch.keys()=}')
+                            # print(f'meta_info = {batch.meta_info.keys()=}')
+                            # print(f'uids = {batch.non_tensor_batch["uid"]}')
 
                     # # Curriculum learning implementation
                     # if self.config.curriculum.enable:
@@ -369,7 +369,7 @@ class RayDAPOTrainer(RayPPOTrainer):
                     with _timer("adv", timing_raw):
                         # compute advantages, executed on the driver process
                         norm_adv_by_std_in_grpo = self.config.algorithm.get("norm_adv_by_std_in_grpo", True)
-                        batch = compute_advantage(
+                        batch = compute_advantage( # RZ: Here we compute the advantages. So this is done before the gradient updates. So we do not have to worry about the uneven division in the gradient updates.
                             batch,
                             adv_estimator=self.config.algorithm.adv_estimator,
                             gamma=self.config.algorithm.gamma,

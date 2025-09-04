@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=FAST-RLOO-1.5B-DAPO-N6+18-KL1e-3-offload       # Job name
-#SBATCH --output=./logs/FAST-RLOO-1.5B-DAPO-N6+18-KL1e-3-offload_%j.out  # Output file (%j will be replaced by job ID)
-#SBATCH --error=./logs/FAST-RLOO-1.5B-DAPO-N6+18-KL1e-3-offload_%j.err   # Error file
+#SBATCH --job-name=FAST-RLOO-1.5B-DAPO-N4+20-offload       # Job name
+#SBATCH --output=./logs/FAST-RLOO-1.5B-DAPO-N4+20-offload_%j.out  # Output file (%j will be replaced by job ID)
+#SBATCH --error=./logs/FAST-RLOO-1.5B-DAPO-N4+20-offload_%j.err   # Error file
 #SBATCH --nodes=1                 # Number of nodes
 #SBATCH --ntasks-per-node=1       # Number of tasks per node
 #SBATCH --cpus-per-task=256         # Number of CPU cores per task
@@ -23,7 +23,7 @@ module load gcc/11.4.0
 wandb login 363018e9dc8339fae726d3b48a839f262c457194
 
 project_name='DAPO'
-exp_name='1.5B-Math-FAST-RLOO-dataDAPO-N6+18-KL1e-3-offload'
+exp_name='1.5B-Math-FAST-RLOO-dataDAPO-N4+20-offload-corrected-mini-bsz'
 
 adv_estimator=rloo
 
@@ -55,8 +55,8 @@ max_num_gen_batches=50 # The maximum number of generations to generate. If we ex
 train_prompt_bsz=16
 gen_prompt_bsz=64
 train_prompt_mini_bsz=16
-n_resp_per_prompt=6
-n_resp_continue=18
+n_resp_per_prompt=4
+n_resp_continue=20
 #########################
 
 n_resp_per_prompt_val=1

@@ -632,6 +632,7 @@ class RayPPOTrainer:
         self._maybe_log_val_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
 
         for key_info, lst in reward_extra_infos_dict.items():
+            # print(f"{key_info}: {len(lst)=}, {len(sample_scores)=}")
             assert len(lst) == 0 or len(lst) == len(sample_scores), f"{key_info}: {len(lst)=}, {len(sample_scores)=}"
 
         data_sources = np.concatenate(data_source_lst, axis=0)

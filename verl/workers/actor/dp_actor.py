@@ -272,7 +272,12 @@ class DataParallelPPOActor(BasePPOActor):
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "old_log_probs", "advantages"]
         if self.config.use_kl_loss:
             select_keys.append("ref_log_prob")
-        batch = data.select(batch_keys=select_keys).batch
+        ### for ablation study: how does the code distribute the batch when doing gradient updates?
+        # if torch.distributed.get_rank() == 0:
+        # print(f'gpu={torch.distributed.get_rank()}, shape of data.batch={data.batch["attention_mask"].shape}')
+        # print(f'gpu={torch.distributed.get_rank()}, uid={data.non_tensor_batch["uid"]}')
+        # print(f'gpu={torch.distributed.get_rank()}, The current ppo_mini_batch_size={self.config.ppo_mini_batch_size}')
+        batch = data.select(batch_keys=select_keys).batch # RZ: batch: tensorDict.
         has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch.keys()
 
         # Split to make minibatch iterator for updating the actor
@@ -285,6 +290,8 @@ class DataParallelPPOActor(BasePPOActor):
             dataloader = batch.split(self.config.ppo_mini_batch_size)
 
         metrics = {}
+        num_gradient_updates = 0
+        # print(f'ppo.epochs={self.config.ppo_epochs}')
         for epoch in range(self.config.ppo_epochs):
             for batch_idx, data in enumerate(dataloader):
                 # split batch into micro_batches
@@ -389,7 +396,9 @@ class DataParallelPPOActor(BasePPOActor):
                     append_to_dict(metrics, data)
 
                 grad_norm = self._optimizer_step()
+                num_gradient_updates += 1
                 data = {"actor/grad_norm": grad_norm.detach().item()}
             append_to_dict(metrics, data)
         self.actor_optimizer.zero_grad()
+        metrics["actor/num_gradient_updates"] = num_gradient_updates
         return metrics

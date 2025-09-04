@@ -1,14 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name=FAST-DAPO-7B-DEEPSCALE-N4+20-offload       # Job name
-#SBATCH --output=./logs/FAST-DAPO-7B-DEEPSCALE-N4+20-offload_%j.out  # Output file (%j will be replaced by job ID)
-#SBATCH --error=./logs/FAST-DAPO-7B-DEEPSCALE-N4+20-offload_%j.err   # Error file
+#SBATCH --job-name=FAST-DAPO-7B-DEEPSCALE-N4+20-offload-corrected-mini-bsz       # Job name
+#SBATCH --output=./logs/FAST-DAPO-7B-DEEPSCALE-N4+20-offload-corrected-mini-bsz_%j.out  # Output file (%j will be replaced by job ID)
+#SBATCH --error=./logs/FAST-DAPO-7B-DEEPSCALE-N4+20-offload-corrected-mini-bsz_%j.err   # Error filel
 #SBATCH --nodes=1                 # Number of nodes
 #SBATCH --ntasks-per-node=1       # Number of tasks per node
 #SBATCH --cpus-per-task=32         # Number of CPU cores per task
 #SBATCH --gpus-per-node=4              # Number of GPUs (4 GPUs per node)
 #SBATCH --mem=450G                # Memory per node
 #SBATCH --time=1-23:00:00           # Time limit (24 hours)
-#SBATCH --account=beok-dtai-gh    # Account name (adjust to your account)
+#SBATCH --account=beok-dtai-gh    # Account nasme (adjust to your account)
 #SBATCH --mail-user=rqzhang@berkeley.edu  # Email address to receive notifications 
 #SBATCH --mail-type=BEGIN,END,FAIL         # Send email at begin, end, or fail of job
 
@@ -23,7 +23,7 @@ module load gcc/11.4.0
 wandb login 363018e9dc8339fae726d3b48a839f262c457194
 
 project_name='DAPO'
-exp_name='7B-Math-FAST-DAPO-DeepScaleR-N4+20-offload'
+exp_name='7B-Math-FAST-DAPO-DeepScaleR-N4+20-offload-corrected-mini-bsz'
 
 adv_estimator=grpo
 
@@ -60,7 +60,7 @@ n_resp_continue=20
 #########################
 
 n_resp_per_prompt_val=1
-total_epochs=10
+total_epochs=3
 enable_curriculum=True
 val_before_train=True
 
@@ -79,7 +79,7 @@ MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-Math-7B"}
 use_chat_template=True
 val_only=False
 
-CKPT_PATH=${CKPT_PATH:-"/work/hdd/beok/rzhang15/checkpoints/DAPO/${exp_name}/$(date +%Y%m%d_%H%M%S)"}
+CKPT_PATH=${CKPT_PATH:-"/work/nvme/betg/rzhang15/checkpoints/DAPO/${exp_name}/$(date +%Y%m%d_%H%M%S)"}
 # there is one experiment that I log in RLOO folder.
 mkdir -p ${CKPT_PATH}
 TRAIN_FILE=${TRAIN_FILE:-"./data/DeepScaleR-instruct/train.parquet"}

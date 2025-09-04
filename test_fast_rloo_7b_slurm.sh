@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=FAST-RLOO-7B-bigRL-N4+20-offload-Llama       # Job name
-#SBATCH --output=./logs/FAST-RLOO-7B-bigRL-N4+20-offload-Llama_%j.out  # Output file (%j will be replaced by job ID)
-#SBATCH --error=./logs/FAST-RLOO-7B-bigRL-N4+20-offload-Llama_%j.err   # Error file
+#SBATCH --job-name=FAST-RLOO-7B-bigRL-N4+20-offload-Llama-test       # Job name
+#SBATCH --output=./logs/FAST-RLOO-7B-bigRL-N4+20-offload-Llama-test_%j.out  # Output file (%j will be replaced by job ID)
+#SBATCH --error=./logs/FAST-RLOO-7B-bigRL-N4+20-offload-Llama-test_%j.err   # Error file
 #SBATCH --nodes=1                 # Number of nodes
 #SBATCH --ntasks-per-node=1       # Number of tasks per node
 #SBATCH --cpus-per-task=32         # Number of CPU cores per task
 #SBATCH --gpus-per-node=4              # Number of GPUs (4 GPUs per node)
-#SBATCH --mem=500G                # Memory per node
-#SBATCH --time=00:15:00           # Time limit (24 hours)
+#SBATCH --mem=450G                # Memory per node
+#SBATCH --time=00:29:59           # Time limit (24 hours)
 #SBATCH --account=betg-dtai-gh    # Account name (adjust to your account)
 #SBATCH --mail-user=rqzhang@berkeley.edu  # Email address to receive notifications
 #SBATCH --mail-type=BEGIN,END,FAIL         # Send email at begin, end, or fail of job
@@ -24,7 +24,7 @@ wandb login 363018e9dc8339fae726d3b48a839f262c457194
 huggingface-cli login --token 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
 
 project_name='DAPO'
-exp_name='7B-bigRL-FAST-RLOO-N4+20-offload-Llama-lr1e-6'
+exp_name='7B-bigRL-FAST-RLOO-N4+20-offload-Llama-test'
 
 adv_estimator=rloo
 
@@ -53,13 +53,11 @@ filter_groups_metric=acc # The metric to filter the prompts.
 max_num_gen_batches=50 # The maximum number of generations to generate. If we exceed this number, we will stop generating and raise error.
 
 #########################
-train_prompt_bsz=16
-gen_prompt_bsz=64
-train_prompt_mini_bsz=16
+train_prompt_bsz=4
+gen_prompt_bsz=16
+train_prompt_mini_bsz=4
 n_resp_per_prompt=4
 n_resp_continue=20
-
-learning_rate=1e-6
 #########################
 
 n_resp_per_prompt_val=1
@@ -95,8 +93,8 @@ top_k=-1 # 0 for HF rollout, -1 for vLLM rollout
 
 # Mathematically equivalent
 use_dynamic_bsz=False
-infer_micro_batch_size=16
-train_micro_batch_size=16
+infer_micro_batch_size=4
+train_micro_batch_size=4
 offload=True
 
 # ray job submit --no-wait --runtime-env="${RUNTIME_ENV}" \
@@ -130,7 +128,6 @@ PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_fast_dapo \
     actor_rollout_ref.actor.use_dynamic_bsz=${use_dynamic_bsz} \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=${use_dynamic_bsz} \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=${use_dynamic_bsz} \
-    actor_rollout_ref.rollout.engine_kwargs.swap_space=32 \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=$((max_prompt_length + max_response_length)) \
     actor_rollout_ref.ref.log_prob_max_token_len_per_gpu=$((max_prompt_length + max_response_length)) \
     actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=$((max_prompt_length + max_response_length)) \
@@ -139,7 +136,7 @@ PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_fast_dapo \
     +actor_rollout_ref.model.override_config.embd_pdrop=0. \
     +actor_rollout_ref.model.override_config.resid_pdrop=0. \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
-    actor_rollout_ref.actor.optim.lr=${learning_rate} \
+    actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps=10 \
     actor_rollout_ref.actor.optim.weight_decay=0.1 \
     actor_rollout_ref.actor.ppo_mini_batch_size=${train_prompt_mini_bsz} \
@@ -171,7 +168,7 @@ PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_fast_dapo \
     reward_model.overlong_buffer.enable=${enable_overlong_buffer} \
     reward_model.overlong_buffer.len=${overlong_buffer_len} \
     reward_model.overlong_buffer.penalty_factor=${overlong_penalty_factor} \
-    trainer.logger=['console','wandb'] \
+    trainer.logger=['console'] \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \

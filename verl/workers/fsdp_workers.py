@@ -122,7 +122,9 @@ class ActorRolloutRefWorker(Worker):
 
         # normalize config
         if self._is_actor:
-            self.config.actor.ppo_mini_batch_size *= self.config.rollout.n 
+            # self.config.actor.ppo_mini_batch_size *= self.config.rollout.n # This is wrong.
+            self.config.actor.ppo_mini_batch_size *= (self.config.rollout.n + self.config.rollout.n_continue) # RZ: This is for ablation study: runninbg RLOO via more gradient updates per step.
+            
             # RZ: I think this is wrong. It should be *= (self.config.rollout.n + self.config.rollout.n_continue)
             self.config.actor.ppo_mini_batch_size //= self.device_mesh.size() // self.ulysses_sequence_parallel_size
             assert self.config.actor.ppo_mini_batch_size > 0, (

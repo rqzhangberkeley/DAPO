@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 from verl import DataProto
+import torch, json, os, time, random, math, logging
 from collections import defaultdict
 
 class DataController:
@@ -16,6 +17,9 @@ class DataController:
         n_gpus: int,
         max_prompt_length: int,
         max_buffer_size: int,
+        tokenizer = None, # tokenizer.
+        kept_file = None, # the file to save the kept prompts.
+        filtered_file = None, # the file to save the filtered prompts.
     ):
         """Initialize the DataController.
         
@@ -45,6 +49,10 @@ class DataController:
         assert self.max_buffer_size >= self.train_batch_size * self.total_n_generations, f"The maximum buffer size should be greater than or equal to the training batch size times the total number of generations. Got {self.max_buffer_size=} and {self.train_batch_size=} and {self.total_n_generations=}"
         assert self.n_continue % self.initial_n == 0, f"The number of additional responses should be divisible by the number of initial responses. Got {self.n_continue=} and {self.initial_n=}"
         self.multiplier = self.n_continue // self.initial_n
+
+        self.tokenizer = tokenizer
+        self.kept_file = kept_file # the file to save the kept prompts
+        self.filtered_file = filtered_file # the file to save the filtered prompts
 
     def is_ready_for_training(self) -> bool:
         if self.prompts_for_training is None:
@@ -76,6 +84,19 @@ class DataController:
         """Add new prompts to be processed in the current batch."""
         assert self.prompts_for_first_generation_phase is None, "First generation phase is already done. Before we call add_new_prompts, the prompts_for_first_generation_phase should be None."
         self.prompts_for_first_generation_phase = batch
+
+        # record the information of the prompts. Added by RZ.
+        if not hasattr(self, "uid_to_prompt_text"):
+            self.uid_to_prompt_text = {}
+            self.uid_to_prompt_length = {} # we shall know this to store the responses.
+        
+        for i, uid in enumerate(set(batch.non_tensor_batch["uid"])):
+            prompt_len = int(batch.batch["attention_mask"][i].sum().item())
+            prompt_ids = batch.batch["input_ids"][i][(-prompt_len):]
+            prompt_text = self.tokenizer.decode(prompt_ids.tolist(), skip_special_tokens=True)
+            self.uid_to_prompt_text[uid] = prompt_text
+            self.uid_to_prompt_length[uid] = prompt_len
+
     
     def get_generation_inputs(self) -> DataProto:
         """Get the prompts for the next generation step."""
@@ -120,7 +141,7 @@ class DataController:
                     self.prompts_for_second_generation_phase = self.prompts_for_second_generation_phase[-(num_second_phase_prompts % self.n_gpus):]
                 return batch
 
-    def update_prompts(self, batch: DataProto, metric_name: str = "acc") -> Tuple[List[str], List[int]]:
+    def update_prompts(self, batch: DataProto, metric_name: str = "acc", global_step: int = 0) -> Tuple[List[str], List[int]]:
         """Update prompt statistics based on the generated responses and their rewards.
         
         There are two types of prompts in 'batch':
@@ -189,8 +210,33 @@ class DataController:
         self.prompts_for_training = responses_after_second_phase if self.prompts_for_training is None else DataProto.concat([self.prompts_for_training, responses_after_second_phase])
         self.num_prompts_for_training += len(set(prompts_uids_after_second_phase))
 
+        # save the filtered prompts, and their responses, as well as their information.
+        filtered_prompt_uids = [uid for uid, std in prompt_uid2metric_std.items()  if std == 0]
+        for uid in filtered_prompt_uids:
+            traj_indices = [idx for idx, u in enumerate(batch.non_tensor_batch["uid"]) if u == uid]
+            # print(batch.select_idxs(traj_indices).non_tensor_batch)
+            average_acc = batch.select_idxs(traj_indices).non_tensor_batch["acc"].mean().item()
+            ground_truth = batch.select_idxs(traj_indices).non_tensor_batch['reward_model'][0]["ground_truth"]
+            log_entry = {
+                "global_step": global_step,
+                "prompt": self.uid_to_prompt_text[uid], 
+                "average_acc": average_acc,
+                "ground_truth": ground_truth,
+                "n_responses": len(traj_indices)
+            }
+            self.filtered_file.write(json.dumps(log_entry) + "\n")
+            self.filtered_file.flush()
+            os.fsync(self.filtered_file.fileno())
+
+            # remove the information of the prompt to avoid this dictionary being too large.
+            if uid in self.uid_to_prompt_text:
+                del self.uid_to_prompt_text[uid]
+            if uid in self.uid_to_prompt_length:
+                del self.uid_to_prompt_length[uid]
+
     def get_training_data(self,
-                          prompt_batch_size: int
+                          prompt_batch_size: int,
+                          global_step: int = 0
                           ) -> DataProto:
         """Get qualified prompts for training."""
 
@@ -213,8 +259,33 @@ class DataController:
         train_resp_bsz = prompt_batch_size * self.total_n_generations
         assert len(training_indices) >= train_resp_bsz, f"The number of training indices should be greater than or equal to the training response batch size. Got {len(training_indices)=} and {train_resp_bsz=}"
 
+        # get the training data.
         training_indices = training_indices[:train_resp_bsz]
         training_data = self.prompts_for_training[training_indices]
+
+        # save the training data to kept_file.
+        for idx, uid in enumerate(set(training_data.non_tensor_batch["uid"])):
+            traj_indices = [idx for idx, u in enumerate(training_data.non_tensor_batch["uid"]) if u == uid]
+            average_acc = training_data.select_idxs(traj_indices).non_tensor_batch["acc"].mean().item()
+            ground_truth = training_data.select_idxs(traj_indices).non_tensor_batch['reward_model'][0]["ground_truth"]
+            log_entry = {
+                "global_step": global_step,
+                "prompt": self.uid_to_prompt_text[uid], 
+                "average_acc": average_acc,
+                "ground_truth": ground_truth,
+                "n_responses": len(traj_indices)
+            }
+            self.kept_file.write(json.dumps(log_entry) + "\n")
+            self.kept_file.flush()
+            os.fsync(self.kept_file.fileno())
+
+            # remove the information of the prompt to avoid this dictionary being too large.
+            if uid in self.uid_to_prompt_text:
+                del self.uid_to_prompt_text[uid]
+            if uid in self.uid_to_prompt_length:
+                del self.uid_to_prompt_length[uid]
+
+        # update the attributes.
         self.num_prompts_for_training -= self.train_batch_size
         remaining_indices = [i for i in range(self.prompts_for_training.batch.batch_size[0]) if i not in training_indices]
         self.prompts_for_training = self.prompts_for_training[remaining_indices]
