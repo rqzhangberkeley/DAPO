@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=FAST-RLOO-3B-SCD-N8+16-offload-B32-middle      # Job name
-#SBATCH --output=./logs/FAST-RLOO-3B-SCD-N8+16-offload-B32-middle_%j.out  # Output file (%j will be replaced by job ID)
-#SBATCH --error=./logs/FAST-RLOO-3B-SCD-N8+16-offload-B32-middle_%j.err   # Error file
+#SBATCH --job-name=FAST-RLOO-3B-SCD-N4+20-offload-B32-middle      # Job name
+#SBATCH --output=./logs/FAST-RLOO-3B-SCD-N4+20-offload-B32-middle_%j.out  # Output file (%j will be replaced by job ID)
+#SBATCH --error=./logs/FAST-RLOO-3B-SCD-N4+20-offload-B32-middle_%j.err   # Error file
 #SBATCH --nodes=1                 # Number of nodes
 #SBATCH --ntasks-per-node=1       # Number of tasks per node
 #SBATCH --cpus-per-task=32         # Number of CPU cores per task
@@ -25,7 +25,7 @@ wandb login 363018e9dc8339fae726d3b48a839f262c457194
 
 
 project_name='DAPO'
-exp_name='3B-SCD-FAST-RLOO-N8+16-offload-B32-middle'
+exp_name='3B-SCD-FAST-RLOO-N4+20-offload-B32-middle-check'
 
 adv_estimator=rloo
 
@@ -58,8 +58,8 @@ max_num_gen_batches=50 # The maximum number of generations to generate. If we ex
 train_prompt_bsz=32
 gen_prompt_bsz=128
 train_prompt_mini_bsz=32
-n_resp_per_prompt=8
-n_resp_continue=16
+n_resp_per_prompt=4
+n_resp_continue=20
 
 learning_rate=1e-6
 #########################

@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=FAST-RLOO-3B-bigRL-N4+20-offload-Llama-bsz4-16       # Job name
-#SBATCH --output=./logs/FAST-RLOO-3B-bigRL-N4+20-offload-Llama-bsz4-16_%j.out  # Output file (%j will be replaced by job ID)
-#SBATCH --error=./logs/FAST-RLOO-3B-bigRL-N4+20-offload-Llama-bsz4-16_%j.err   # Error file
+#SBATCH --job-name=RLOO-3B-bigRL-N24-offload-Llama-bsz4-16       # Job name
+#SBATCH --output=./logs/RLOO-3B-bigRL-N24-offload-Llama-bsz4-16_%j.out  # Output file (%j will be replaced by job ID)
+#SBATCH --error=./logs/RLOO-3B-bigRL-N24-offload-Llama-bsz4-16_%j.err   # Error file
 #SBATCH --nodes=1                 # Number of nodes
 #SBATCH --ntasks-per-node=1       # Number of tasks per node
 #SBATCH --cpus-per-task=32         # Number of CPU cores per task
@@ -24,7 +24,7 @@ wandb login 363018e9dc8339fae726d3b48a839f262c457194
 huggingface-cli login --token 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
 
 project_name='DAPO'
-exp_name='3B-bigRL-FAST-RLOO-N4+20-offload-Llama-bsz4-16-lr1e-6'
+exp_name='3B-bigRL-RLOO-N24-offload-Llama-bsz4-16-lr1e-6'
 
 adv_estimator=rloo
 
@@ -48,7 +48,7 @@ overlong_penalty_factor=1.0
 
 loss_agg_mode="token-mean"
 
-enable_filter_groups=True # Whether we filter the prompts base on the pass rates.
+enable_filter_groups=False # Whether we filter the prompts base on the pass rates.
 filter_groups_metric=acc # The metric to filter the prompts.
 max_num_gen_batches=50 # The maximum number of generations to generate. If we exceed this number, we will stop generating and raise error.
 
@@ -56,18 +56,18 @@ max_num_gen_batches=50 # The maximum number of generations to generate. If we ex
 train_prompt_bsz=4
 gen_prompt_bsz=16
 train_prompt_mini_bsz=4
-n_resp_per_prompt=4
-n_resp_continue=20
+n_resp_per_prompt=24
+n_resp_continue=0
 
 learning_rate=1e-6
 #########################
 
 n_resp_per_prompt_val=1
 total_epochs=1
-enable_curriculum=True
+enable_curriculum=False
 val_before_train=True
 
-save_freq=50
+save_freq=50000
 max_ckpt_to_keep=1
 test_freq=25
 
@@ -102,7 +102,7 @@ offload=True
 # ray job submit --no-wait --runtime-env="${RUNTIME_ENV}" \
 #     --working-dir "${WORKING_DIR}" \
 #     -- 
-PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_fast_dapo \
+PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_dapo \
     data.train_files="${TRAIN_FILE}" \
     data.val_files=[\"./data/Math500-instruct/test.parquet\"] \
     data.prompt_key=prompt \

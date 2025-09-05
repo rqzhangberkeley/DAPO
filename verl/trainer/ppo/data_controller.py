@@ -90,9 +90,20 @@ class DataController:
             self.uid_to_prompt_text = {}
             self.uid_to_prompt_length = {} # we shall know this to store the responses.
         
-        for i, uid in enumerate(set(batch.non_tensor_batch["uid"])):
-            prompt_len = int(batch.batch["attention_mask"][i].sum().item())
-            prompt_ids = batch.batch["input_ids"][i][(-prompt_len):]
+        # for i, uid in enumerate(set(batch.non_tensor_batch["uid"])):
+        #     prompt_len = int(batch.batch["attention_mask"][i].sum().item())
+        #     prompt_ids = batch.batch["input_ids"][i][(-prompt_len):]
+        #     prompt_text = self.tokenizer.decode(prompt_ids.tolist(), skip_special_tokens=True)
+        #     self.uid_to_prompt_text[uid] = prompt_text
+        #     self.uid_to_prompt_length[uid] = prompt_len
+
+        uids = batch.non_tensor_batch["uid"].tolist()
+        attn = batch.batch["attention_mask"]
+        inp  = batch.batch["input_ids"]
+
+        for i, uid in enumerate(uids):
+            prompt_len = int(attn[i].sum().item())
+            prompt_ids = inp[i][-prompt_len:]
             prompt_text = self.tokenizer.decode(prompt_ids.tolist(), skip_special_tokens=True)
             self.uid_to_prompt_text[uid] = prompt_text
             self.uid_to_prompt_length[uid] = prompt_len
