@@ -149,7 +149,7 @@ class vLLMRollout(BaseRollout):
 
         kwargs = dict(
             n=1,
-            logprobs=0,  # can be set to 0 and let actor to recompute
+            logprobs=0 if not self.config.calculate_log_probs else 1,  # can be set to 0 and let actor to recompute
             max_tokens=config.response_length,
         )
 
@@ -190,7 +190,7 @@ class vLLMRollout(BaseRollout):
     def create_new_sampling_params(self, **kwargs):
         new_kwargs = dict(
             n=1,
-            logprobs=0,  # can be set to 0 and let actor to recompute
+            logprobs=0 if not self.config.calculate_log_probs else 1,  # can be set to 0 and let actor to recompute
             max_tokens=self.config.response_length,
         )
         for key in self.config.keys():
@@ -257,11 +257,16 @@ class vLLMRollout(BaseRollout):
             # TODO(sgm): disable logprob when recompute_log_prob is enable
             # if n = 1: (bs, response_length) ; if n > 1: (bs * n, response_length)
             response = output[0].to(idx.device)
-            # log_probs = output[1].to(idx.device)
-
             if response.shape[1] < self.config.response_length:
                 response = pad_sequence_to_length(response, self.config.response_length, self.pad_token_id)
-                # log_probs = pad_sequence_to_length(log_probs, self.config.response_length, self.pad_token_id)
+
+            # ------ RZ: added by RZ: Deal with the mismatch between the fsdp policy and the rollout policy ---------
+            if self.config.calculate_log_probs:
+                rollout_log_probs = output[1].to(idx.device)
+                if rollout_log_probs.shape[1] < self.config.response_length:
+                    rollout_log_probs = pad_sequence_to_length(rollout_log_probs, self.config.response_length, -1)
+                rollout_log_probs = rollout_log_probs.to(torch.float32)
+            # ----------------------------------------------------------------------------------------------------------
 
             # utilize current sampling params
             if self.sampling_params.n > 1 and do_sample:
@@ -304,5 +309,10 @@ class vLLMRollout(BaseRollout):
         # free vllm cache engine
         if self.config.free_cache_engine:
             self.inference_engine.free_cache_engine()
+
+        # RZ: --------- added by RZ: Deal with the mismatch between the fsdp policy and the rollout policy ---------
+        if self.config.calculate_log_probs:
+            batch['rollout_log_probs'] = rollout_log_probs
+        # ----------------------------------------------------------------------------------------------------------
 
         return DataProto(batch=batch)

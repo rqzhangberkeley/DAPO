@@ -1,4 +1,16 @@
 #!/bin/bash
+#SBATCH --job-name=FAST-RLOO-3B-bigRL-N12+12-offload-Llama-bsz4-16-3e-7-correct-log-prob-tis       # Job name
+#SBATCH --output=./logs/FAST-RLOO-3B-bigRL-N12+12-offload-Llama-bsz4-16-3e-7-correct-log-prob-tis_%j.out  # Output file (%j will be replaced by job ID)
+#SBATCH --error=./logs/FAST-RLOO-3B-bigRL-N12+12-offload-Llama-bsz4-16-3e-7-correct-log-prob-tis_%j.err   # Error file
+#SBATCH --nodes=1                 # Number of nodes
+#SBATCH --ntasks-per-node=1       # Number of tasks per node
+#SBATCH --cpus-per-task=32         # Number of CPU cores per task
+#SBATCH --gpus-per-node=4              # Number of GPUs (4 GPUs per node)
+#SBATCH --mem=500G                # Memory per node
+#SBATCH --time=23:59:59           # Time limit (24 hours)
+#SBATCH --account=bevr-dtai-gh    # Account name (adjust to your account)
+#SBATCH --mail-user=rqzhang@berkeley.edu  # Email address to receive notifications
+#SBATCH --mail-type=BEGIN,END,FAIL         # Send email at begin, end, or fail of job
 
 set -xeuo pipefail
 
@@ -8,9 +20,10 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
 # module default
 module load cuda/12.6.1
 module load gcc/11.4.0
+wandb login 363018e9dc8339fae726d3b48a839f262c457194
 
 project_name='DAPO'
-exp_name='3B-bigRL-FAST-RLOO-N12+12-offload-Llama-bsz4-16-lr3e-7-new-test'
+exp_name='3B-bigRL-FAST-RLOO-N12+12-offload-Llama-bsz4-16-lr3e-7-test-correct-log-prob-tis'
 
 adv_estimator=rloo
 
@@ -46,14 +59,16 @@ n_resp_per_prompt=12
 n_resp_continue=12
 
 learning_rate=3e-7
+tis_imp_ratio_cap=2.0
+calculate_log_probs=True
 #########################
 
 n_resp_per_prompt_val=1
 total_epochs=1
 enable_curriculum=True
-val_before_train=False
+val_before_train=True
 
-save_freq=500000
+save_freq=50
 max_ckpt_to_keep=1
 test_freq=25
 
@@ -62,7 +77,7 @@ RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
 WORKING_DIR=${WORKING_DIR:-"${PWD}"}
 RUNTIME_ENV=${RUNTIME_ENV:-"${WORKING_DIR}/verl/trainer/runtime_env.yaml"}
 NNODES=${NNODES:-1}
-GPUS_PER_NODE=${GPUS_PER_NODE:-1}
+GPUS_PER_NODE=${GPUS_PER_NODE:-4}
 # Paths
 MODEL_PATH=${MODEL_PATH:-"meta-llama/Llama-3.2-3B-Instruct"}
 use_chat_template=True
@@ -79,7 +94,7 @@ val_temperature=0.0 # this is for Llama.
 top_p=1.0
 top_k=-1 # 0 for HF rollout, -1 for vLLM rollout
 
-# Mathematically equivalent
+# Mathematically equivalent. We do not use dynamic batch size for this experiment.
 use_dynamic_bsz=False
 infer_micro_batch_size=4
 train_micro_batch_size=4
@@ -106,6 +121,8 @@ PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_fast_dapo \
     actor_rollout_ref.actor.clip_ratio_low=${clip_ratio_low} \
     actor_rollout_ref.actor.clip_ratio_high=${clip_ratio_high} \
     actor_rollout_ref.actor.clip_ratio_c=10.0 \
+    actor_rollout_ref.rollout.calculate_log_probs=${calculate_log_probs} \
+    actor_rollout_ref.actor.tis_imp_ratio_cap=${tis_imp_ratio_cap} \
     algorithm.adv_estimator=${adv_estimator} \
     algorithm.use_kl_in_reward=${use_kl_in_reward} \
     algorithm.kl_ctrl.kl_coef=${kl_coef} \
@@ -157,7 +174,7 @@ PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_fast_dapo \
     reward_model.overlong_buffer.enable=${enable_overlong_buffer} \
     reward_model.overlong_buffer.len=${overlong_buffer_len} \
     reward_model.overlong_buffer.penalty_factor=${overlong_penalty_factor} \
-    trainer.logger=['console'] \
+    trainer.logger=['console','wandb'] \
     trainer.project_name="${project_name}" \
     trainer.experiment_name="${exp_name}" \
     trainer.n_gpus_per_node=${GPUS_PER_NODE} \
@@ -173,6 +190,5 @@ PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_fast_dapo \
     trainer.save_metrics_local_dir=${WORKING_DIR}/metrics \
     trainer.save_metric_path=${exp_name}_$(date +%Y%m%d_%H%M%S) \
     trainer.default_local_dir=${CKPT_PATH} \
-    curriculum.enable=${enable_curriculum} | tee ./logs/${exp_name}_TEST_$(date +%Y%m%d_%H%M%S).log
-
-# nohup ./run_fast_rloo_3b_math_slurm.sh > ./logs/TEST.log 2>&1 &
+    trainer.log_val_generations=1 \
+    curriculum.enable=${enable_curriculum} | tee ./logs/${exp_name}_$(date +%Y%m%d_%H%M%S).log

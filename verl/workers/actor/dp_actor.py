@@ -272,6 +272,17 @@ class DataParallelPPOActor(BasePPOActor):
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "old_log_probs", "advantages"]
         if self.config.use_kl_loss:
             select_keys.append("ref_log_prob")
+        
+        # RZ: --------added by RZ: Deal with the mismatch between the fsdp policy and the rollout policy.---------
+        if self.config.tis_imp_ratio_cap > 0:
+            assert "rollout_log_probs" in data.batch.keys(), (
+                "Truncated Importance Sampling (TIS) requires to configure "
+                "`actor_rollout_ref.rollout.calculate_log_probs=True` "
+                "and is not currently supported in Server mode (agent loop)."
+            )
+            select_keys.append("rollout_log_probs")
+        # ----------------------------------------------------------------------------------------------------------
+
         ### for ablation study: how does the code distribute the batch when doing gradient updates?
         # if torch.distributed.get_rank() == 0:
         # print(f'gpu={torch.distributed.get_rank()}, shape of data.batch={data.batch["attention_mask"].shape}')
@@ -325,6 +336,9 @@ class DataParallelPPOActor(BasePPOActor):
                     attention_mask = data["attention_mask"]
                     response_mask = attention_mask[:, -response_length:]
                     old_log_prob = data["old_log_probs"]
+                    # RZ: --------added by RZ: Deal with the mismatch between the fsdp policy and the rollout policy.---------
+                    rollout_log_probs = data["rollout_log_probs"] if self.config.tis_imp_ratio_cap > 0 else None
+                    # ----------------------------------------------------------------------------------------------------------
                     advantages = data["advantages"]
 
                     clip_ratio = self.config.clip_ratio
@@ -356,6 +370,8 @@ class DataParallelPPOActor(BasePPOActor):
                         cliprange_high=clip_ratio_high,
                         clip_ratio_c=clip_ratio_c,
                         loss_agg_mode=loss_agg_mode,
+                        tis_imp_ratio_cap=self.config.tis_imp_ratio_cap,
+                        rollout_log_probs=rollout_log_probs, # RZ: added by RZ: Deal with the mismatch between the fsdp policy and the rollout policy.
                     )
 
                     if entropy_coeff != 0:

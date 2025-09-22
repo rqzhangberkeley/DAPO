@@ -1,14 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name=FAST-RLOO-3B-bigRL-N12+12-offload-Llama-bsz4-16-3e-7       # Job name
-#SBATCH --output=./logs/FAST-RLOO-3B-bigRL-N12+12-offload-Llama-bsz4-16-3e-7_%j.out  # Output file (%j will be replaced by job ID)
-#SBATCH --error=./logs/FAST-RLOO-3B-bigRL-N12+12-offload-Llama-bsz4-16-3e-7_%j.err   # Error file
+#SBATCH --job-name=FAST-RLOO-3B-bigRL-N12+12-offload-Llama-bsz4-16-3e-7-correct-log-prob       # Job name
+#SBATCH --output=./logs/FAST-RLOO-3B-bigRL-N12+12-offload-Llama-bsz4-16-3e-7-correct-log-prob_%j.out  # Output file (%j will be replaced by job ID)
+#SBATCH --error=./logs/FAST-RLOO-3B-bigRL-N12+12-offload-Llama-bsz4-16-3e-7-correct-log-prob_%j.err   # Error file
 #SBATCH --nodes=1                 # Number of nodes
 #SBATCH --ntasks-per-node=1       # Number of tasks per node
 #SBATCH --cpus-per-task=32         # Number of CPU cores per task
 #SBATCH --gpus-per-node=4              # Number of GPUs (4 GPUs per node)
 #SBATCH --mem=500G                # Memory per node
-#SBATCH --time=1-23:59:59           # Time limit (24 hours)
-#SBATCH --account=bffw-dtai-gh    # Account name (adjust to your account)
+#SBATCH --time=23:59:59           # Time limit (24 hours)
+#SBATCH --account=bevr-dtai-gh    # Account name (adjust to your account)
 #SBATCH --mail-user=rqzhang@berkeley.edu  # Email address to receive notifications
 #SBATCH --mail-type=BEGIN,END,FAIL         # Send email at begin, end, or fail of job
 
@@ -23,7 +23,7 @@ module load gcc/11.4.0
 wandb login 363018e9dc8339fae726d3b48a839f262c457194
 
 project_name='DAPO'
-exp_name='3B-bigRL-FAST-RLOO-N12+12-offload-Llama-bsz4-16-lr3e-7-test'
+exp_name='3B-bigRL-FAST-RLOO-N12+12-offload-Llama-bsz4-16-lr3e-7-test-correct-log-prob'
 
 adv_estimator=rloo
 
@@ -92,7 +92,7 @@ val_temperature=0.0 # this is for Llama.
 top_p=1.0
 top_k=-1 # 0 for HF rollout, -1 for vLLM rollout
 
-# Mathematically equivalent
+# Mathematically equivalent. We do not use dynamic batch size for this experiment.
 use_dynamic_bsz=False
 infer_micro_batch_size=4
 train_micro_batch_size=4

@@ -139,7 +139,8 @@ class RayFastDAPOTrainer(RayPPOTrainer):
             for batch_dict in self.train_dataloader:
                 is_last_step = self.global_steps >= self.total_training_steps
 
-                if not self.data_controller.is_ready_for_training(): # not ready for training. Do Inference.
+                # ------------------ GENERATION / BUFFER FILL ------------------
+                if not self.data_controller.is_ready_for_training():
                     print(f"Not enough prompts for training. We have {self.data_controller.get_num_prompts_for_training()=} prompts ready for training.")
 
                     # get a new batch for inference
@@ -150,9 +151,8 @@ class RayFastDAPOTrainer(RayPPOTrainer):
                     num_gen_batches += 1
                     assert "multi_modal_inputs" not in new_batch.non_tensor_batch.keys(), "Multi-modal inputs are not supported yet."
 
-                    # RZ: We add new batch to the data controller and get a batch ready for generation from the data controller. The batch for generation may contain the old prompts in data controller that passes the filter.
-                    self.data_controller.add_new_prompts_first_phase(new_batch)
-                    new_batch = self.data_controller.get_generation_inputs()
+                    self.data_controller.add_new_prompts_first_phase(new_batch) # log one new batch to the data controller.
+                    new_batch = self.data_controller.get_generation_inputs() # get a batch (can include old prompts) for generation.
                     gen_batch = new_batch.pop(
                         batch_keys=["input_ids", "attention_mask", "position_ids"]
                     ) # DataProto.
@@ -165,8 +165,29 @@ class RayFastDAPOTrainer(RayPPOTrainer):
                         gen_end_time = time.time()
                         print(f"Time taken for generation: {gen_end_time - gen_start_time} seconds")
 
-                        new_batch = new_batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True) # repeat to align with repeated responses in rollout
+                        new_batch = new_batch.repeat(
+                            repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True
+                        ) # repeat to align with repeated responses in rollout
                         new_batch = new_batch.union(gen_batch_output)
+
+                        # ---------- NEW: Compute the old log probs and the ref probs before logging into dat controller ----------
+                        # This guarantees that the old log probs are from the policy that generates the responses in the new batch.
+                        old_log_prob_start_time = time.time()
+                        with _timer("old_log_prob", timing_raw):
+                            old_log_prob = self.actor_rollout_wg.compute_log_prob(new_batch) # DataProto with batch.keys = ['entropys', 'old_log_probs'], non_tensor_batch is empty, meta_info = {'temperature': config.actor_rollout_ref.rollout.temperature}
+                            new_batch = new_batch.union(old_log_prob)
+                        old_log_prob_end_time = time.time()
+                        print(f"Time taken for old_log_prob: old_log_prob_{old_log_prob_end_time - old_log_prob_start_time} seconds")
+
+                        ref_start_time = time.time()
+                        if self.use_reference_policy:
+                            # compute reference log_prob
+                            with _timer("ref", timing_raw):
+                                ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(new_batch) # DataProto with batch.keys = ['ref_log_prob'], non_tensor_batch is empty, meta_info is empty.
+                                new_batch = new_batch.union(ref_log_prob)
+                        ref_end_time = time.time()
+                        print(f"Time taken for ref: ref_{ref_end_time - ref_start_time} seconds")
+                        # ------------------------------------------------------------------------------------------------
 
                         with _timer("reward", timing_raw):
                             if self.use_rm:
@@ -201,11 +222,11 @@ class RayFastDAPOTrainer(RayPPOTrainer):
                                 metrics.update(
                                     kl_metrics
                                 )  # TODO: This will be cleared if we use multiple genenration batches
-                            else:
+                            else: # RZ: By default we do not use KL penalty in reward.
                                 new_batch.batch["token_level_rewards"] = new_batch.batch["token_level_scores"]
                         
                         # Update prompt statistics and get filtered prompts/trajectories
-                        self.data_controller.update_prompts(new_batch, self.config.algorithm.filter_groups.metric, self.global_steps) # update: a new argument 'global_steps'.
+                        self.data_controller.update_prompts(new_batch, self.config.algorithm.filter_groups.metric, self.global_steps)
                         continue
                             
                 elif self.data_controller.is_ready_for_training(): # start training when we have enough qualified prompts.
@@ -215,7 +236,6 @@ class RayFastDAPOTrainer(RayPPOTrainer):
                         # if we start the training without doing any additional inferences (there coould be enough qualified prompts in the buffer), we need to initialize the metrics.
                     batch = self.data_controller.get_training_data(prompt_batch_size = self.config.data.train_batch_size, global_step=self.global_steps) 
                     # get a batch of training data.
-                        
 
                     with _timer("step", timing_raw):
                         # balance the number of valid tokens on each dp rank.
@@ -228,21 +248,21 @@ class RayFastDAPOTrainer(RayPPOTrainer):
                         batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
 
                         # recompute old_log_probs
-                        old_log_prob_start_time = time.time()
-                        with _timer("old_log_prob", timing_raw):
-                            old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
-                            batch = batch.union(old_log_prob)
-                        old_log_prob_end_time = time.time()
-                        print(f"Time taken for old_log_prob: old_log_prob_{old_log_prob_end_time - old_log_prob_start_time} seconds")
+                        # old_log_prob_start_time = time.time()
+                        # with _timer("old_log_prob", timing_raw):
+                        #     old_log_prob = self.actor_rollout_wg.compute_log_prob(batch) # DataProto with batch.keys = ['entropys', 'old_log_probs'], non_tensor_batch is empty, meta_info = {'temperature': config.actor_rollout_ref.rollout.temperature}
+                        #     batch = batch.union(old_log_prob)
+                        # old_log_prob_end_time = time.time()
+                        # print(f"Time taken for old_log_prob: old_log_prob_{old_log_prob_end_time - old_log_prob_start_time} seconds")
 
-                        ref_start_time = time.time()
-                        if self.use_reference_policy:
-                            # compute reference log_prob
-                            with _timer("ref", timing_raw):
-                                ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
-                                batch = batch.union(ref_log_prob)
-                        ref_end_time = time.time()
-                        print(f"Time taken for ref: ref_{ref_end_time - ref_start_time} seconds")
+                        # ref_start_time = time.time()
+                        # if self.use_reference_policy:
+                        #     # compute reference log_prob
+                        #     with _timer("ref", timing_raw):
+                        #         ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch) # DataProto with batch.keys = ['ref_log_prob'], non_tensor_batch is empty, meta_info is empty.
+                        #         batch = batch.union(ref_log_prob)
+                        # ref_end_time = time.time()
+                        # print(f"Time taken for ref: ref_{ref_end_time - ref_start_time} seconds"]
 
                         # compute values
                         if self.use_critic:

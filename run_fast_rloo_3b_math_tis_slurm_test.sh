@@ -10,7 +10,7 @@ module load cuda/12.6.1
 module load gcc/11.4.0
 
 project_name='DAPO'
-exp_name='3B-bigRL-FAST-RLOO-N12+12-offload-Llama-bsz4-16-lr3e-7-new-test'
+exp_name='3B-bigRL-FAST-RLOO-N12+12-offload-Llama-bsz4-16-lr3e-7-correct-log-probs-tis-test'
 
 adv_estimator=rloo
 
@@ -46,6 +46,8 @@ n_resp_per_prompt=12
 n_resp_continue=12
 
 learning_rate=3e-7
+tis_imp_ratio_cap=2.0
+calculate_log_probs=True
 #########################
 
 n_resp_per_prompt_val=1
@@ -106,6 +108,8 @@ PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_fast_dapo \
     actor_rollout_ref.actor.clip_ratio_low=${clip_ratio_low} \
     actor_rollout_ref.actor.clip_ratio_high=${clip_ratio_high} \
     actor_rollout_ref.actor.clip_ratio_c=10.0 \
+    actor_rollout_ref.rollout.calculate_log_probs=${calculate_log_probs} \
+    actor_rollout_ref.actor.tis_imp_ratio_cap=${tis_imp_ratio_cap} \
     algorithm.adv_estimator=${adv_estimator} \
     algorithm.use_kl_in_reward=${use_kl_in_reward} \
     algorithm.kl_ctrl.kl_coef=${kl_coef} \

@@ -89,13 +89,6 @@ class DataController:
         if not hasattr(self, "uid_to_prompt_text"):
             self.uid_to_prompt_text = {}
             self.uid_to_prompt_length = {} # we shall know this to store the responses.
-        
-        # for i, uid in enumerate(set(batch.non_tensor_batch["uid"])):
-        #     prompt_len = int(batch.batch["attention_mask"][i].sum().item())
-        #     prompt_ids = batch.batch["input_ids"][i][(-prompt_len):]
-        #     prompt_text = self.tokenizer.decode(prompt_ids.tolist(), skip_special_tokens=True)
-        #     self.uid_to_prompt_text[uid] = prompt_text
-        #     self.uid_to_prompt_length[uid] = prompt_len
 
         uids = batch.non_tensor_batch["uid"].tolist()
         attn = batch.batch["attention_mask"]
@@ -167,25 +160,6 @@ class DataController:
         For the second type, those are the prompt that finish the second generation phase and we can use those for training.
         """
 
-        # # Collect the sequence reward for each trajectory
-        # prompt_uid2metric_vals = defaultdict(list)
-        # for uid, metric_val in zip(
-        #     batch.non_tensor_batch["uid"], batch.non_tensor_batch[metric_name]
-        # ):
-        #     prompt_uid2metric_vals[uid].append(metric_val)
-
-        # # categorize the prompts into two types.
-        # prompts_uids_after_first_phase = [
-        #     uid
-        #     for uid, _ in prompt_uid2metric_vals.items()
-        #     if len(prompt_uid2metric_vals[uid]) == self.initial_n
-        # ]
-        # prompts_uids_after_second_phase = [
-        #     uid
-        #     for uid, _ in prompt_uid2metric_vals.items()
-        #     if len(prompt_uid2metric_vals[uid]) == self.n_continue
-        # ]
-
         ######### Updated #########
         # Collect per-phase metrics and classify by explicit phase tag
         uids   = batch.non_tensor_batch["uid"]
@@ -212,11 +186,6 @@ class DataController:
                 seen.add(u); prompts_uids_after_second_phase.append(u)
         ######### End ofUpdated #########
 
-        # Deal with the first-class prompts.
-        # prompt_uid2metric_std = {}
-        # for prompt_uid in prompts_uids_after_first_phase:
-        #     prompt_uid2metric_std[prompt_uid] = np.std(prompt_uid2metric_vals[prompt_uid])
-
         ######### Updated #########
         prompt_uid2metric_std = {u: np.std(uid2metrics_first[u]) for u in prompts_uids_after_first_phase}
         ######### End of Updated #########
@@ -226,15 +195,6 @@ class DataController:
             for uid, std in prompt_uid2metric_std.items()
             if std > 0
         ] # RZ: The qualified prompts that have pass rate between 0 and 1.
-        # kept_traj_idxs = []
-        # kept_traj_idxs_unique = []
-        # kept_prompt_uids_unique = []
-        # for idx, traj_from_prompt_uid in enumerate(batch.non_tensor_batch["uid"]):
-        #     if traj_from_prompt_uid in kept_prompt_uids:
-        #         kept_traj_idxs.append(idx)
-        #         if traj_from_prompt_uid not in kept_prompt_uids_unique:
-        #             kept_prompt_uids_unique.append(traj_from_prompt_uid)
-        #             kept_traj_idxs_unique.append(idx)
 
         ######### Updated #########
         kept_traj_idxs = []
@@ -258,16 +218,6 @@ class DataController:
 
         # Add the responses from the first-class prompts to the training set.
         self.prompts_for_training = qualified_prompts_responses_after_first_phase if self.prompts_for_training is None else DataProto.concat([self.prompts_for_training, qualified_prompts_responses_after_first_phase])
-        
-        # Deal with the second-class prompts.
-        # traj_idxs = []
-        # if prompts_uids_after_second_phase:
-        #     for idx, traj_from_prompt_uid in enumerate(batch.non_tensor_batch["uid"]):
-        #         if traj_from_prompt_uid in prompts_uids_after_second_phase:
-        #             traj_idxs.append(idx)
-        # responses_after_second_phase = batch[traj_idxs]
-        # self.prompts_for_training = responses_after_second_phase if self.prompts_for_training is None else DataProto.concat([self.prompts_for_training, responses_after_second_phase])
-        # self.num_prompts_for_training += len(set(prompts_uids_after_second_phase))
 
         traj_idxs = [i for i, p in enumerate(phase) if p == 2]
         responses_after_second_phase = batch[traj_idxs]
