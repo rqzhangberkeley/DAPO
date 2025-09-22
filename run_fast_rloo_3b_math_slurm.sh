@@ -59,6 +59,8 @@ n_resp_per_prompt=12
 n_resp_continue=12
 
 learning_rate=3e-7
+tis_imp_ratio_cap=0.0
+calculate_log_probs=False
 #########################
 
 n_resp_per_prompt_val=1
@@ -126,6 +128,8 @@ PYTHONUNBUFFERED=1 python3 -m recipe.dapo.src.main_fast_dapo \
     algorithm.filter_groups.metric=${filter_groups_metric} \
     algorithm.filter_groups.max_num_gen_batches=${max_num_gen_batches} \
     actor_rollout_ref.model.use_remove_padding=True \
+    actor_rollout_ref.rollout.calculate_log_probs=${calculate_log_probs} \
+    actor_rollout_ref.actor.tis_imp_ratio_cap=${tis_imp_ratio_cap} \
     actor_rollout_ref.actor.use_dynamic_bsz=${use_dynamic_bsz} \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=${use_dynamic_bsz} \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=${use_dynamic_bsz} \

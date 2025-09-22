@@ -170,23 +170,23 @@ class RayFastDAPOTrainer(RayPPOTrainer):
                         ) # repeat to align with repeated responses in rollout
                         new_batch = new_batch.union(gen_batch_output)
 
-                        # ---------- NEW: Compute the old log probs and the ref probs before logging into dat controller ----------
-                        # This guarantees that the old log probs are from the policy that generates the responses in the new batch.
-                        old_log_prob_start_time = time.time()
-                        with _timer("old_log_prob", timing_raw):
-                            old_log_prob = self.actor_rollout_wg.compute_log_prob(new_batch) # DataProto with batch.keys = ['entropys', 'old_log_probs'], non_tensor_batch is empty, meta_info = {'temperature': config.actor_rollout_ref.rollout.temperature}
-                            new_batch = new_batch.union(old_log_prob)
-                        old_log_prob_end_time = time.time()
-                        print(f"Time taken for old_log_prob: old_log_prob_{old_log_prob_end_time - old_log_prob_start_time} seconds")
+                        # # ---------- NEW: Compute the old log probs and the ref probs before logging into dat controller ----------
+                        # # This guarantees that the old log probs are from the policy that generates the responses in the new batch.
+                        # old_log_prob_start_time = time.time()
+                        # with _timer("old_log_prob", timing_raw):
+                        #     old_log_prob = self.actor_rollout_wg.compute_log_prob(new_batch) # DataProto with batch.keys = ['entropys', 'old_log_probs'], non_tensor_batch is empty, meta_info = {'temperature': config.actor_rollout_ref.rollout.temperature}
+                        #     new_batch = new_batch.union(old_log_prob)
+                        # old_log_prob_end_time = time.time()
+                        # print(f"Time taken for old_log_prob: old_log_prob_{old_log_prob_end_time - old_log_prob_start_time} seconds")
 
-                        ref_start_time = time.time()
-                        if self.use_reference_policy:
-                            # compute reference log_prob
-                            with _timer("ref", timing_raw):
-                                ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(new_batch) # DataProto with batch.keys = ['ref_log_prob'], non_tensor_batch is empty, meta_info is empty.
-                                new_batch = new_batch.union(ref_log_prob)
-                        ref_end_time = time.time()
-                        print(f"Time taken for ref: ref_{ref_end_time - ref_start_time} seconds")
+                        # ref_start_time = time.time()
+                        # if self.use_reference_policy:
+                        #     # compute reference log_prob
+                        #     with _timer("ref", timing_raw):
+                        #         ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(new_batch) # DataProto with batch.keys = ['ref_log_prob'], non_tensor_batch is empty, meta_info is empty.
+                        #         new_batch = new_batch.union(ref_log_prob)
+                        # ref_end_time = time.time()
+                        # print(f"Time taken for ref: ref_{ref_end_time - ref_start_time} seconds")
                         # ------------------------------------------------------------------------------------------------
 
                         with _timer("reward", timing_raw):
@@ -248,21 +248,21 @@ class RayFastDAPOTrainer(RayPPOTrainer):
                         batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
 
                         # recompute old_log_probs
-                        # old_log_prob_start_time = time.time()
-                        # with _timer("old_log_prob", timing_raw):
-                        #     old_log_prob = self.actor_rollout_wg.compute_log_prob(batch) # DataProto with batch.keys = ['entropys', 'old_log_probs'], non_tensor_batch is empty, meta_info = {'temperature': config.actor_rollout_ref.rollout.temperature}
-                        #     batch = batch.union(old_log_prob)
-                        # old_log_prob_end_time = time.time()
-                        # print(f"Time taken for old_log_prob: old_log_prob_{old_log_prob_end_time - old_log_prob_start_time} seconds")
+                        old_log_prob_start_time = time.time()
+                        with _timer("old_log_prob", timing_raw):
+                            old_log_prob = self.actor_rollout_wg.compute_log_prob(batch) # DataProto with batch.keys = ['entropys', 'old_log_probs'], non_tensor_batch is empty, meta_info = {'temperature': config.actor_rollout_ref.rollout.temperature}
+                            batch = batch.union(old_log_prob)
+                        old_log_prob_end_time = time.time()
+                        print(f"Time taken for old_log_prob: old_log_prob_{old_log_prob_end_time - old_log_prob_start_time} seconds")
 
-                        # ref_start_time = time.time()
-                        # if self.use_reference_policy:
-                        #     # compute reference log_prob
-                        #     with _timer("ref", timing_raw):
-                        #         ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch) # DataProto with batch.keys = ['ref_log_prob'], non_tensor_batch is empty, meta_info is empty.
-                        #         batch = batch.union(ref_log_prob)
-                        # ref_end_time = time.time()
-                        # print(f"Time taken for ref: ref_{ref_end_time - ref_start_time} seconds"]
+                        ref_start_time = time.time()
+                        if self.use_reference_policy:
+                            # compute reference log_prob
+                            with _timer("ref", timing_raw):
+                                ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch) # DataProto with batch.keys = ['ref_log_prob'], non_tensor_batch is empty, meta_info is empty.
+                                batch = batch.union(ref_log_prob)
+                        ref_end_time = time.time()
+                        print(f"Time taken for ref: ref_{ref_end_time - ref_start_time} seconds")
 
                         # compute values
                         if self.use_critic:
