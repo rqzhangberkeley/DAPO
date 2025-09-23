@@ -32,7 +32,7 @@ def _default_compute_score(data_source, solution_str, ground_truth, extra_info=N
         res = countdown.compute_score(solution_str, ground_truth)
     ### end of simple countdown
 
-    elif data_source.startswith('NuminaMath') or data_source.startswith('AIME') or data_source.startswith('AMC') or data_source.startswith('MATH500') or data_source.startswith('math_dapo') or data_source.startswith('DeepScaleR') or data_source.startswith('bigRL'):
+    elif data_source.startswith('NuminaMath') or data_source.startswith('AIME') or data_source.startswith('AMC') or data_source.startswith('MATH500') or data_source.startswith('math_dapo') or data_source.startswith('DeepScaleR') or data_source.startswith('bigRL') or data_source.startswith('DeepMath'):
         # from . import math
 
         # res = math.compute_score(solution_str, ground_truth)
