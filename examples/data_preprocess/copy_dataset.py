@@ -6,14 +6,14 @@ from verl.utils.hdfs_io import copy, makedirs
 from verl.utils.reward_score.math import remove_boxed, last_boxed_only_string
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--local_dir', default='./data/AIME2025-dup16-Qwen-base')
+    parser.add_argument('--local_dir', default='./data/AMC23-dup4-Qwen-base')
     parser.add_argument('--model_type', default='base')
     parser.add_argument('--hdfs_dir', default=None)
-    parser.add_argument('--num_copies', type=int, default=16)
+    parser.add_argument('--num_copies', type=int, default=4)
     args = parser.parse_args()
 
     # Read the original dataset
-    dataset_path = 'rqzhang/AIME2025-Qwen-base'
+    dataset_path = 'rqzhang/AMC23-base'
     dataset = datasets.load_dataset(dataset_path)
     split = 'train'
 

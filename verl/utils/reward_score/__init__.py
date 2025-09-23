@@ -16,9 +16,14 @@
 
 def _default_compute_score(data_source, solution_str, ground_truth, extra_info=None):
     if data_source == "openai/gsm8k":
-        from . import gsm8k
+        # from . import gsm8k
 
-        res = gsm8k.compute_score(solution_str, ground_truth)
+        # res = gsm8k.compute_score(solution_str, ground_truth)
+
+        ####### RZ: ------ for the current experiments. ------ #######
+        from . import math_verify
+        res = math_verify.compute_score(solution_str, ground_truth)
+        ####### RZ: ------ for the current experiments. ------ #######
     
     ### for simple countdown
     elif data_source == "SimpleCountDown":
